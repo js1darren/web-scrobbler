@@ -1,7 +1,7 @@
 import * as BrowserStorage from '@/core/storage/browser-storage';
 import * as Options from '@/core/storage/options';
+import type { Accessor, Setter } from 'solid-js';
 import {
-	Accessor,
 	For,
 	Show,
 	Suspense,
@@ -10,11 +10,14 @@ import {
 	createSignal,
 } from 'solid-js';
 import styles from './components.module.scss';
-import Settings from '@suid/icons-material/SettingsOutlined';
-import ExpandMore from '@suid/icons-material/ExpandMoreOutlined';
-import Delete from '@suid/icons-material/DeleteOutlined';
-import connectors, { ConnectorMeta } from '@/core/connectors';
-import Add from '@suid/icons-material/AddOutlined';
+import {
+	SettingsOutlined,
+	ExpandMoreOutlined,
+	DeleteOutlined,
+	AddOutlined,
+} from '@/ui/components/icons';
+import type { ConnectorMeta } from '@/core/connectors';
+import connectors from '@/core/connectors';
 import {
 	Checkbox,
 	ConnectorTripleCheckbox,
@@ -23,38 +26,43 @@ import {
 } from './inputs';
 import browser from 'webextension-polyfill';
 import { t } from '@/util/i18n';
+import BlockedChannels from './edit-options/blocked-channels';
+import type { ModalType } from './navigator';
 
 const globalOptions = BrowserStorage.getStorage(BrowserStorage.OPTIONS);
 const connectorOverrideOptions = BrowserStorage.getStorage(
-	BrowserStorage.CONNECTORS_OVERRIDE_OPTIONS
+	BrowserStorage.CONNECTORS_OVERRIDE_OPTIONS,
 );
 const customPatterns = BrowserStorage.getStorage(
-	BrowserStorage.CUSTOM_PATTERNS
+	BrowserStorage.CUSTOM_PATTERNS,
 );
 
 const [options, setOptions] = createResource(
-	globalOptions.get.bind(globalOptions)
+	globalOptions.get.bind(globalOptions),
 );
 const [overrideOptions, setOverrideOptions] = createResource(
-	connectorOverrideOptions.get.bind(connectorOverrideOptions)
+	connectorOverrideOptions.get.bind(connectorOverrideOptions),
 );
 const [customPatternOptions, setCustomPatternOptions] = createResource(
-	customPatterns.get.bind(customPatterns)
+	customPatterns.get.bind(customPatterns),
 );
 
 /**
  * Component that shows the override options for all connectors
  */
-export default function ConnectorOverrideOptions() {
+export default function ConnectorOverrideOptions(props: {
+	setActiveModal: Setter<ModalType>;
+	modal: HTMLDialogElement | undefined;
+}) {
 	return (
 		<>
 			<h1>{t('optionsSupportedWebsites')}</h1>
 			<p>{t('optionsEnableDisableHint')}</p>
 			{/* eslint-disable-next-line */}
 			<p innerHTML={t('optionsCustomPatternsHint')} />
-			<ul class={styles.connectorOptionsList}>
+			<ul class={`${styles.connectorOptionsList} ${styles.optionList}`}>
 				<li>
-					<Settings />
+					<SettingsOutlined />
 					<Checkbox
 						title={t('optionsToggle')}
 						label={t('optionsToggle')}
@@ -65,7 +73,9 @@ export default function ConnectorOverrideOptions() {
 						onInput={(e) => {
 							if (e.currentTarget.checked) {
 								setOptions.mutate((o) => {
-									if (!o) return o;
+									if (!o) {
+										return o;
+									}
 									const newOptions = {
 										...o,
 										disabledConnectors: {},
@@ -75,10 +85,12 @@ export default function ConnectorOverrideOptions() {
 								});
 							} else {
 								const disabledConnectors = Object.fromEntries(
-									connectors.map((c) => [c.id, true])
+									connectors.map((c) => [c.id, true]),
 								);
 								setOptions.mutate((o) => {
-									if (!o) return o;
+									if (!o) {
+										return o;
+									}
 									const newOptions = {
 										...o,
 										disabledConnectors,
@@ -91,7 +103,10 @@ export default function ConnectorOverrideOptions() {
 					/>
 				</li>
 
-				<ConnectorOptions />
+				<ConnectorOptions
+					setActiveModal={props.setActiveModal}
+					modal={props.modal}
+				/>
 			</ul>
 		</>
 	);
@@ -100,11 +115,20 @@ export default function ConnectorOverrideOptions() {
 /**
  * Connector Override Options list
  */
-function ConnectorOptions() {
+function ConnectorOptions(props: {
+	setActiveModal: Setter<ModalType>;
+	modal: HTMLDialogElement | undefined;
+}) {
 	return (
 		<Suspense fallback={<p>{t('optionsLoadingConnectorOptions')}</p>}>
 			<For each={connectors}>
-				{(connector) => <ConnectorOption connector={connector} />}
+				{(connector) => (
+					<ConnectorOption
+						setActiveModal={props.setActiveModal}
+						modal={props.modal}
+						connector={connector}
+					/>
+				)}
 			</For>
 		</Suspense>
 	);
@@ -113,8 +137,11 @@ function ConnectorOptions() {
 /**
  * The connector override options for one connector
  */
-function ConnectorOption(props: { connector: ConnectorMeta }) {
-	const { connector } = props;
+function ConnectorOption(props: {
+	connector: ConnectorMeta;
+	setActiveModal: Setter<ModalType>;
+	modal: HTMLDialogElement | undefined;
+}) {
 	const [ref, setRef] = createSignal<HTMLDetailsElement>();
 	const [active, setActive] = createSignal(false);
 	createEffect(() => {
@@ -126,20 +153,24 @@ function ConnectorOption(props: { connector: ConnectorMeta }) {
 		<li>
 			<details ref={setRef}>
 				<summary>
-					<ExpandMore class={styles.expandVector} />
+					<ExpandMoreOutlined class={styles.expandVector} />
 					<SummaryCheckbox
-						title={connector.label}
-						label={connector.label}
-						id={connector.id}
+						title={props.connector.label}
+						label={props.connector.label}
+						id={props.connector.id}
 						isChecked={() =>
 							!(
-								options()?.disabledConnectors?.[connector.id] ??
-								false
+								options()?.disabledConnectors?.[
+									props.connector.id
+								] ?? false
 							)
 						}
 						onInput={(e) => {
+							const connector = props.connector;
 							setOptions.mutate((o) => {
-								if (!o) return o;
+								if (!o) {
+									return o;
+								}
 								const newOptions = {
 									...o,
 								};
@@ -160,7 +191,9 @@ function ConnectorOption(props: { connector: ConnectorMeta }) {
 					/>
 				</summary>
 				<ConnectorOverrideOptionDetails
-					connector={connector}
+					setActiveModal={props.setActiveModal}
+					modal={props.modal}
+					connector={props.connector}
 					active={active}
 				/>
 			</details>
@@ -174,128 +207,164 @@ function ConnectorOption(props: { connector: ConnectorMeta }) {
 function ConnectorOverrideOptionDetails(props: {
 	connector: ConnectorMeta;
 	active: Accessor<boolean>;
+	setActiveModal: Setter<ModalType>;
+	modal: HTMLDialogElement | undefined;
 }) {
-	const { connector } = props;
 	return (
 		<Show when={props.active()}>
-			<h3>{t('optionsGeneral')}</h3>
-			<Show when={browser.notifications}>
+			<div role="group" aria-label={props.connector.label}>
+				<h3>{t('optionsGeneral')}</h3>
+				<Show when={browser.notifications}>
+					<ConnectorTripleCheckbox
+						title={t('optionUseNotificationsTitle')}
+						label={t('optionUseNotifications')}
+						connector={props.connector}
+						option={Options.USE_NOTIFICATIONS}
+						overrideOptions={overrideOptions}
+						setOverrideOptions={setOverrideOptions}
+						connectorOverrideOptions={connectorOverrideOptions}
+					/>
+					<ConnectorTripleCheckbox
+						title={t('optionUnrecognizedNotificationsTitle')}
+						label={t('optionUnrecognizedNotifications')}
+						connector={props.connector}
+						option={Options.USE_UNRECOGNIZED_SONG_NOTIFICATIONS}
+						overrideOptions={overrideOptions}
+						setOverrideOptions={setOverrideOptions}
+						connectorOverrideOptions={connectorOverrideOptions}
+					/>
+				</Show>
 				<ConnectorTripleCheckbox
-					title={t('optionUseNotificationsTitle')}
-					label={t('optionUseNotifications')}
-					connector={connector}
-					option={Options.USE_NOTIFICATIONS}
+					title={t('optionUseInfoboxTitle')}
+					label={t('optionUseInfobox')}
+					connector={props.connector}
+					option={Options.USE_INFOBOX}
 					overrideOptions={overrideOptions}
 					setOverrideOptions={setOverrideOptions}
 					connectorOverrideOptions={connectorOverrideOptions}
 				/>
 				<ConnectorTripleCheckbox
-					title={t('optionUnrecognizedNotificationsTitle')}
-					label={t('optionUnrecognizedNotifications')}
-					connector={connector}
-					option={Options.USE_UNRECOGNIZED_SONG_NOTIFICATIONS}
+					title={t('optionScrobblePodcastsTitle')}
+					label={t('optionScrobblePodcasts')}
+					connector={props.connector}
+					option={Options.SCROBBLE_PODCASTS}
 					overrideOptions={overrideOptions}
 					setOverrideOptions={setOverrideOptions}
 					connectorOverrideOptions={connectorOverrideOptions}
 				/>
-			</Show>
-			<ConnectorTripleCheckbox
-				title={t('optionScrobblePodcastsTitle')}
-				label={t('optionScrobblePodcasts')}
-				connector={connector}
-				option={Options.SCROBBLE_PODCASTS}
-				overrideOptions={overrideOptions}
-				setOverrideOptions={setOverrideOptions}
-				connectorOverrideOptions={connectorOverrideOptions}
-			/>
-			<h3>{t('optionsScrobbleBehavior')}</h3>
-			<RadioButtons
-				buttons={[
-					{
-						label: t('optionForceRecognize'),
-						title: t('optionForceRecognizeTitle'),
-						value: Options.FORCE_RECOGNIZE,
-					},
-					{
-						label: t('optionScrobbleRecognizedTracks'),
-						title: t('optionScrobbleRecognizedTracksTitle'),
-						value: Options.SCROBBLE_RECOGNIZED_TRACKS,
-					},
-					{
-						label: t('optionScrobbleEditedTracksOnly'),
-						title: t('optionScrobbleEditedTracksOnlyTitle'),
-						value: Options.SCROBBLE_EDITED_TRACKS_ONLY,
-					},
-				]}
-				name={`${connector.id}-scrobbleBehavior`}
-				value={() => {
-					if (
-						overrideOptions()?.[connector.id]?.[
-							Options.FORCE_RECOGNIZE
-						]
-					) {
-						return Options.FORCE_RECOGNIZE;
-					}
-					if (
-						overrideOptions()?.[connector.id]?.[
-							Options.SCROBBLE_EDITED_TRACKS_ONLY
-						]
-					) {
-						return Options.SCROBBLE_EDITED_TRACKS_ONLY;
-					}
-					if (
-						overrideOptions()?.[connector.id]?.[
-							Options.SCROBBLE_RECOGNIZED_TRACKS
-						]
-					) {
-						return Options.SCROBBLE_RECOGNIZED_TRACKS;
-					}
+				<ConnectorTripleCheckbox
+					title={t('optionAutoToggleLoveTitle')}
+					label={t('optionAutoToggleLove')}
+					connector={props.connector}
+					option={Options.AUTO_TOGGLE_LOVE}
+					overrideOptions={overrideOptions}
+					setOverrideOptions={setOverrideOptions}
+					connectorOverrideOptions={connectorOverrideOptions}
+				/>
 
-					return '';
-				}}
-				onChange={(e) => {
-					const value = e.currentTarget.value;
-					setOverrideOptions.mutate((o) => {
-						const newOptions = {
-							...(o ?? {}),
-						};
-						newOptions[connector.id] = {
-							...(newOptions[connector.id] ?? {}),
-							[Options.FORCE_RECOGNIZE]:
-								value === Options.FORCE_RECOGNIZE,
-							[Options.SCROBBLE_EDITED_TRACKS_ONLY]:
-								value === Options.SCROBBLE_EDITED_TRACKS_ONLY,
-							[Options.SCROBBLE_RECOGNIZED_TRACKS]:
-								value === Options.SCROBBLE_RECOGNIZED_TRACKS,
-						};
+				<h3 id={`${props.connector.id}-scrobble-behavior`}>
+					{t('optionsScrobbleBehavior')}
+				</h3>
+				<RadioButtons
+					labelledby={`${props.connector.id}-scrobble-behavior`}
+					buttons={[
+						{
+							label: t('optionForceRecognize'),
+							title: t('optionForceRecognizeTitle'),
+							value: Options.FORCE_RECOGNIZE,
+						},
+						{
+							label: t('optionScrobbleRecognizedTracks'),
+							title: t('optionScrobbleRecognizedTracksTitle'),
+							value: Options.SCROBBLE_RECOGNIZED_TRACKS,
+						},
+						{
+							label: t('optionScrobbleEditedTracksOnly'),
+							title: t('optionScrobbleEditedTracksOnlyTitle'),
+							value: Options.SCROBBLE_EDITED_TRACKS_ONLY,
+						},
+					]}
+					name={`${props.connector.id}-scrobbleBehavior`}
+					value={() => {
+						if (
+							overrideOptions()?.[props.connector.id]?.[
+								Options.FORCE_RECOGNIZE
+							]
+						) {
+							return Options.FORCE_RECOGNIZE;
+						}
+						if (
+							overrideOptions()?.[props.connector.id]?.[
+								Options.SCROBBLE_EDITED_TRACKS_ONLY
+							]
+						) {
+							return Options.SCROBBLE_EDITED_TRACKS_ONLY;
+						}
+						if (
+							overrideOptions()?.[props.connector.id]?.[
+								Options.SCROBBLE_RECOGNIZED_TRACKS
+							]
+						) {
+							return Options.SCROBBLE_RECOGNIZED_TRACKS;
+						}
 
-						connectorOverrideOptions.set(newOptions);
-						return newOptions;
-					});
-				}}
-				reset={() => {
-					setOverrideOptions.mutate((o) => {
-						const newOptions = {
-							...(o ?? {}),
-						};
-						delete newOptions[connector.id][
-							Options.FORCE_RECOGNIZE
-						];
-						delete newOptions[connector.id][
-							Options.SCROBBLE_EDITED_TRACKS_ONLY
-						];
-						delete newOptions[connector.id][
-							Options.SCROBBLE_RECOGNIZED_TRACKS
-						];
+						return '';
+					}}
+					onChange={(e) => {
+						const value = e.currentTarget.value;
+						const connector = props.connector;
+						setOverrideOptions.mutate((o) => {
+							const newOptions = {
+								...(o ?? {}),
+							};
+							newOptions[connector.id] = {
+								...(newOptions[connector.id] ?? {}),
+								[Options.FORCE_RECOGNIZE]:
+									value === Options.FORCE_RECOGNIZE,
+								[Options.SCROBBLE_EDITED_TRACKS_ONLY]:
+									value ===
+									Options.SCROBBLE_EDITED_TRACKS_ONLY,
+								[Options.SCROBBLE_RECOGNIZED_TRACKS]:
+									value ===
+									Options.SCROBBLE_RECOGNIZED_TRACKS,
+							};
 
-						connectorOverrideOptions.set(newOptions);
-						return newOptions;
-					});
-				}}
-			/>
-			<h3>{t('customPatterns')}</h3>
-			<p>{t('customPatternsHint')}</p>
-			<EditCustomPatterns connector={connector} />
+							connectorOverrideOptions.set(newOptions);
+							return newOptions;
+						});
+					}}
+					reset={() => {
+						const connector = props.connector;
+						setOverrideOptions.mutate((o) => {
+							const newOptions = {
+								...(o ?? {}),
+							};
+							delete newOptions[connector.id][
+								Options.FORCE_RECOGNIZE
+							];
+							delete newOptions[connector.id][
+								Options.SCROBBLE_EDITED_TRACKS_ONLY
+							];
+							delete newOptions[connector.id][
+								Options.SCROBBLE_RECOGNIZED_TRACKS
+							];
+
+							connectorOverrideOptions.set(newOptions);
+							return newOptions;
+						});
+					}}
+				/>
+				<h3>{t('customPatterns')}</h3>
+				<p>{t('customPatternsHint')}</p>
+				<EditCustomPatterns connector={props.connector} />
+				<Show when={props.connector.usesBlocklist}>
+					<BlockedChannels
+						setActiveModal={props.setActiveModal}
+						modal={props.modal}
+						connector={props.connector}
+					/>
+				</Show>
+			</div>
 		</Show>
 	);
 }
@@ -304,10 +373,9 @@ function ConnectorOverrideOptionDetails(props: {
  * input boxes that allows the user to edit the custom URL patterns for a connector
  */
 function EditCustomPatterns(props: { connector: ConnectorMeta }) {
-	const { connector } = props;
 	return (
 		<>
-			<For each={customPatternOptions()?.[connector.id] ?? []}>
+			<For each={customPatternOptions()?.[props.connector.id] ?? []}>
 				{(pattern, i) => (
 					<div class={styles.patternWrapper}>
 						<input
@@ -315,24 +383,29 @@ function EditCustomPatterns(props: { connector: ConnectorMeta }) {
 							type="text"
 							value={pattern}
 							onInput={(e) => {
+								const connector = props.connector;
+								const index = i();
 								setCustomPatternOptions.mutate((o) => {
-									if (!o) {
-										o = {};
+									let data = o;
+									if (!data) {
+										data = {};
 									}
-									o[connector.id] = [
-										...(o[connector.id] ?? []),
+									data[connector.id] = [
+										...(data[connector.id] ?? []),
 									];
-									o[connector.id][i()] =
+									data[connector.id][index] =
 										e.currentTarget.value;
-									customPatterns.set(o);
-									return o;
+									customPatterns.set(data);
+									return data;
 								});
 							}}
 						/>
 						<button
-							class={styles.patternDeleteButton}
+							class={`${styles.button} ${styles.small} ${styles.noRadius}`}
 							type="button"
 							onClick={() => {
+								const connector = props.connector;
+								const index = i();
 								setCustomPatternOptions.mutate((o) => {
 									const newPatterns = {
 										...(o ?? {}),
@@ -340,21 +413,22 @@ function EditCustomPatterns(props: { connector: ConnectorMeta }) {
 									newPatterns[connector.id] = [
 										...(newPatterns[connector.id] ?? []),
 									];
-									newPatterns[connector.id].splice(i(), 1);
+									newPatterns[connector.id].splice(index, 1);
 									customPatterns.set(newPatterns);
 									return newPatterns;
 								});
 							}}
 						>
-							<Delete />
+							<DeleteOutlined />
 						</button>
 					</div>
 				)}
 			</For>
 			<button
-				class={styles.patternAddButton}
+				class={`${styles.button} ${styles.shiftLeft}`}
 				type="button"
 				onClick={() => {
+					const connector = props.connector;
 					setCustomPatternOptions.mutate((o) => {
 						const newPatterns = {
 							...(o ?? {}),
@@ -368,7 +442,7 @@ function EditCustomPatterns(props: { connector: ConnectorMeta }) {
 					});
 				}}
 			>
-				<Add />
+				<AddOutlined />
 				{t('customPatternsAdd')}
 			</button>
 		</>

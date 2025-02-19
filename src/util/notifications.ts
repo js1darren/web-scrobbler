@@ -1,11 +1,13 @@
-import { BaseSong } from '@/core/object/song';
+import type { BaseSong } from '@/core/object/song';
 
 import browser from 'webextension-polyfill';
 import { getPlatformName, isFullscreenMode } from '@/util/util-browser';
 import * as Options from '@/core/storage/options';
-import { ConnectorMeta } from '@/core/connectors';
-import { Scrobbler } from '@/core/object/scrobble-service';
+import type { ConnectorMeta } from '@/core/connectors';
+import type { Scrobbler } from '@/core/object/scrobble-service';
 import { debugLog } from '@/core/content/util';
+import * as BrowserStorage from '@/core/storage/browser-storage';
+import NativeScrobblerNotification from '@/core/storage/native-scrobbler-notification';
 
 /**
  * Notification service.
@@ -43,6 +45,9 @@ let notificationTimeoutId: NodeJS.Timeout | null = null;
  * @returns Check result
  */
 async function isAvailable() {
+	if (!browser?.notifications) {
+		return false;
+	}
 	// #v-ifdef VITE_CHROME
 	const platform = await getPlatformName();
 	if (platform === 'mac') {
@@ -74,7 +79,7 @@ async function isAllowed(connector: ConnectorMeta) {
  * @param notificationId - Notification ID
  * @param callback - Function that will be called on notification click
  */
-function addOnClickedListener(notificationId: number, callback: () => void) {
+function addOnClickedListener(notificationId: string, callback: () => void) {
 	clickListeners[notificationId] = callback;
 }
 
@@ -112,7 +117,7 @@ interface ProcessedNotificationOptions extends BaseNotificationOptions {
  */
 async function showNotification(
 	options: BaseNotificationOptions,
-	onClick: (() => void) | null
+	onClick: (() => void) | null,
 ) {
 	if (!(await isAvailable())) {
 		throw new Error('Notifications are not available');
@@ -131,7 +136,7 @@ async function showNotification(
 	try {
 		notificationId = await browser.notifications?.create(
 			'',
-			processedOptions
+			processedOptions,
 		);
 	} catch (err) {
 		// Use default track art and try again
@@ -142,15 +147,55 @@ async function showNotification(
 		processedOptions.iconUrl = defaultTrackArtUrl;
 		notificationId = await browser.notifications?.create(
 			'',
-			processedOptions
+			processedOptions,
 		);
 	}
 
 	if (typeof onClick === 'function') {
-		addOnClickedListener(parseInt(notificationId), onClick);
+		addOnClickedListener(notificationId, onClick);
 	}
 
 	return notificationId;
+}
+
+/**
+ * Show notification warning about native scrobbler
+ * @param connector - Connector for which to show it
+ */
+export async function showNativeScrobblerWarning(
+	connector: ConnectorMeta,
+): Promise<void> {
+	const nativeScrobblerNotification = new NativeScrobblerNotification();
+	if (
+		!connector.hasNativeScrobbler ||
+		!(await nativeScrobblerNotification.shouldNotifyAboutNativeScrobbler(
+			connector.id,
+		))
+	) {
+		return;
+	}
+
+	const options = {
+		title: browser.i18n.getMessage(
+			'notificationNativeScrobbler',
+			connector.label,
+		),
+		message: browser.i18n.getMessage('notificationNativeScrobblerText'),
+	};
+
+	try {
+		await showNotification(options, () => {
+			browser.tabs.create({
+				url: browser.runtime.getURL(
+					'src/ui/options/index.html?p=connectors',
+				),
+			});
+		});
+		await nativeScrobblerNotification.saveHasNotified(connector.id);
+	} catch (err) {
+		debugLog('Unable to show native scrobbler notification: ', 'warn');
+		debugLog(err, 'warn');
+	}
 }
 
 /**
@@ -162,7 +207,7 @@ async function showNotification(
 export async function showNowPlaying(
 	song: BaseSong,
 	connector: ConnectorMeta,
-	onClick: () => void
+	onClick: () => void,
 ): Promise<void> {
 	if (!(await isAllowed(connector))) {
 		return;
@@ -186,7 +231,7 @@ export async function showNowPlaying(
 	if (userPlayCount) {
 		const userPlayCountStr = browser.i18n.getMessage(
 			'infoYourScrobbles',
-			userPlayCount.toString()
+			userPlayCount.toString(),
 		);
 		message = `${message ?? 'null'}\n${userPlayCountStr}`;
 	}
@@ -235,7 +280,7 @@ export function clearNowPlaying(song: BaseSong): void {
  */
 export function showError(
 	message: string,
-	onClick: (() => void) | null = null
+	onClick: (() => void) | null = null,
 ): void {
 	const title = browser.i18n.getMessage('notificationAuthError');
 	const options = { title, message };
@@ -249,11 +294,11 @@ export function showError(
  */
 export function showSignInError(
 	scrobbler: Scrobbler,
-	onClick: () => void
+	onClick: () => void,
 ): void {
 	const errorMessage = browser.i18n.getMessage(
 		'notificationUnableSignIn',
-		scrobbler.getLabel()
+		scrobbler.getLabel(),
 	);
 	showError(errorMessage, onClick);
 }
@@ -267,12 +312,12 @@ export function showSignInError(
 export async function showSongNotRecognized(
 	song: BaseSong,
 	connector: ConnectorMeta,
-	onClick: () => void
+	onClick: () => void,
 ): Promise<void> {
 	if (
 		!(await Options.getOption(
 			Options.USE_UNRECOGNIZED_SONG_NOTIFICATIONS,
-			connector.id
+			connector.id,
 		))
 	) {
 		return;
@@ -284,21 +329,114 @@ export async function showSongNotRecognized(
 		message: browser.i18n.getMessage('notificationNotRecognizedText'),
 	};
 
-	const notificationId = await showNotification(options, onClick);
-	song.metadata.notificationId = notificationId;
+	try {
+		const notificationId = await showNotification(options, onClick);
+		song.metadata.notificationId = notificationId;
+	} catch (err) {
+		debugLog('Unable to show song not recognized notification: ', 'warn');
+		debugLog(err, 'warn');
+	}
+}
+
+/**
+ * How many times to show auth notification.
+ */
+const authNotificationDisplayCount = 3;
+
+/**
+ * Storage for auth notification display count.
+ */
+const notificationStorage = BrowserStorage.getStorage(
+	BrowserStorage.NOTIFICATIONS,
+);
+
+/**
+ * Check if auth notification is allowed.
+ * @returns Check result
+ */
+async function isAuthNotificationAllowed(): Promise<boolean> {
+	const displayCount =
+		(await notificationStorage.get())?.authDisplayCount || 0;
+	return displayCount < authNotificationDisplayCount;
+}
+
+/**
+ * Update internal counter of displayed auth notifications.
+ */
+async function updateAuthDisplayCount() {
+	let data = await notificationStorage.get();
+	if (!data) {
+		data = {
+			authDisplayCount: 0,
+		};
+	}
+
+	data.authDisplayCount = data.authDisplayCount + 1;
+	await notificationStorage.set(data);
 }
 
 /**
  * Show auth notification.
- * @param onClick - Function that will be called on notification click
  */
-export async function showAuthNotification(onClick: () => void): Promise<void> {
+export async function showAuthNotification(): Promise<void> {
+	if (!(await isAuthNotificationAllowed())) {
+		return;
+	}
+
 	const options = {
 		title: browser.i18n.getMessage('notificationConnectAccounts'),
 		message: browser.i18n.getMessage('notificationConnectAccountsText'),
 	};
 
-	await showNotification(options, onClick);
+	try {
+		await showNotification(options, () => {
+			browser.tabs.create({
+				url: browser.runtime.getURL(
+					'src/ui/options/index.html?p=accounts',
+				),
+			});
+		});
+	} catch (err) {
+		debugLog('Unable to show auth notification: ', 'warn');
+		debugLog(err, 'warn');
+		browser.tabs.create({
+			url: browser.runtime.getURL('src/ui/options/index.html?p=accounts'),
+		});
+	}
+	void updateAuthDisplayCount();
+}
+
+/**
+ * Show 'Loved'/'Unloved' notification when song is love/unlove toggled.
+ * @param song - Copy of song isntance
+ * @param isLoved - whether a song is loved or not
+ */
+export async function showLovedNotification(
+	song: BaseSong,
+	isLoved: boolean,
+): Promise<void> {
+	// do not show the notification when user has them disabled
+	if (!(await isAllowed(song.connector))) {
+		return;
+	}
+
+	const iconUrl = song.getTrackArt() || defaultTrackArtUrl;
+	const message = `${song.getTrack()}\n${song.getArtist()}`;
+
+	const title = isLoved
+		? browser.i18n.getMessage('pageActionLoved', message)
+		: browser.i18n.getMessage('pageActionUnloved', message);
+	const options = {
+		iconUrl,
+		title,
+		message,
+	};
+	try {
+		await showNotification(options, null);
+	} catch (err) {
+		debugLog('Unable to show loved notification: ', 'warn');
+		debugLog(err, 'warn');
+	}
 }
 
 /**

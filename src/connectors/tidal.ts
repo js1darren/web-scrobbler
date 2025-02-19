@@ -6,18 +6,18 @@ Connector.playButtonSelector = `${Connector.playerSelector} button[data-test="pl
 
 Connector.pauseButtonSelector = `${Connector.playerSelector} button[data-test="pause"]`;
 
-Connector.isScrobblingAllowed = () =>
-	!!Util.queryElements(Connector.playButtonSelector);
+Connector.scrobblingDisallowedReason = () =>
+	Util.queryElements(Connector.playButtonSelector) ? null : 'ElementMissing';
 
 Connector.trackSelector = [
-	'#nowPlaying div.react-tabs__tab-panel--selected > div > div:nth-child(1) > div:nth-child(1) > wave-text:nth-child(2)',
+	'#nowPlaying span[data-test="now-playing-track-title"]',
 	`${Connector.playerSelector} div[data-test="footer-track-title"]`,
 ];
 
 Connector.getUniqueID = () => {
 	const trackUrl = Util.getAttrFromSelectors(
-		`${Connector.trackSelector} a`,
-		'href'
+		`${Connector.trackSelector?.toString()} a`,
+		'href',
 	);
 	if (trackUrl) {
 		return trackUrl.split('/').at(-1);
@@ -33,7 +33,7 @@ Connector.getArtist = () => {
 };
 
 Connector.albumSelector = [
-	'#nowPlaying div.react-tabs a[href^="/album/"]',
+	'#nowPlaying div.react-tabs div[class^="currentMediaInfoContainer--"] div[class^="creditsCell--"] a[href^="/album/"]',
 	`${Connector.playerSelector} a[href^="/album/"]`,
 ];
 
@@ -41,10 +41,12 @@ Connector.getAlbumArtist = () => {
 	const albumUrl = Util.getAttrFromSelectors(Connector.albumSelector, 'href');
 	const canonicalUrl = Util.getAttrFromSelectors(
 		'head link[rel="canonical"]',
-		'href'
+		'href',
 	);
 	if (albumUrl && canonicalUrl && canonicalUrl.endsWith(albumUrl)) {
-		const albumArtistNode = document.querySelectorAll('#main .header-details .artist-link a');
+		const albumArtistNode = document.querySelectorAll(
+			'#main .header-details .artist-link a',
+		);
 		return Util.joinArtists(Array.from(albumArtistNode));
 	}
 	return null;

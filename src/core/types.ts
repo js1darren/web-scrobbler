@@ -1,3 +1,5 @@
+import type { DisallowedReason } from './object/disallowed-reason';
+
 export interface TimeInfo {
 	/**
 	 * Currentime in seconds
@@ -71,4 +73,9 @@ export interface State extends BaseState {
 	 * Origin URL.
 	 */
 	originUrl?: string | null;
+
+	/**
+	 * Is scrobbling allowed
+	 */
+	scrobblingDisallowedReason?: DisallowedReason | null;
 }

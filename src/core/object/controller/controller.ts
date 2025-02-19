@@ -1,8 +1,9 @@
-import { ConnectorMeta } from '@/core/connectors';
+import type { ConnectorMeta } from '@/core/connectors';
 import * as Options from '@/core/storage/options';
+import type { DebugLogType } from '@/util/util';
 import {
 	areAllResults,
-	DebugLogType,
+	parseScrobblePercent,
 	getSecondsToScrobble,
 	isAnyResult,
 } from '@/util/util';
@@ -13,7 +14,7 @@ import * as ControllerMode from '@/core/object/controller/controller-mode';
 import * as ControllerEvents from '@/core/object/controller/controller-event';
 import { ServiceCallResult } from '@/core/object/service-call-result';
 import SavedEdits from '@/core/storage/saved-edits';
-import { State } from '@/core/types';
+import type { State } from '@/core/types';
 import {
 	contentListener,
 	sendContentMessage,
@@ -22,6 +23,11 @@ import {
 import EventEmitter from '@/util/emitter';
 import * as BrowserStorage from '@/core/storage/browser-storage';
 import { debugLog } from '@/core/content/util';
+import scrobbleCache from '@/core/storage/scrobble-cache';
+import { ScrobbleStatus } from '@/core/storage/wrapper';
+import browser from 'webextension-polyfill';
+import type BaseConnector from '@/core/content/connector';
+import Blocklist from '@/core/storage/blocklist';
 
 /**
  * List of song fields used to check if song is changed. If any of
@@ -39,12 +45,16 @@ export type ControllerModeStr =
  * Priorities of each state as an object
  */
 export const isPrioritizedMode: Partial<Record<ControllerModeStr, true>> = {
+	[ControllerMode.Disallowed]: true,
 	[ControllerMode.Playing]: true,
+	[ControllerMode.Paused]: true,
 	[ControllerMode.Scrobbled]: true,
 	[ControllerMode.Loading]: true,
 	[ControllerMode.Unknown]: true,
 	[ControllerMode.Ignored]: true,
 	[ControllerMode.Err]: true,
+	[ControllerMode.Loved]: true,
+	[ControllerMode.Unloved]: true,
 };
 
 type updateEvent = {
@@ -57,9 +67,11 @@ const disabledTabs = BrowserStorage.getStorage(BrowserStorage.DISABLED_TABS);
  * Object that handles song playback and scrobbling actions.
  */
 export default class Controller {
-	public connector: ConnectorMeta;
+	public connector: BaseConnector;
 	public isEnabled: boolean;
-	public mode: ControllerModeStr;
+	private mode: ControllerModeStr;
+	private tempMode: ControllerModeStr | null;
+	private timeoutId: NodeJS.Timeout | undefined = undefined;
 
 	private pipeline = new Pipeline();
 	private playbackTimer = new Timer();
@@ -68,6 +80,12 @@ export default class Controller {
 	private currentSong: Song | null = null;
 	private isReplayingSong = false;
 	private shouldScrobblePodcasts = true;
+	private scrobbleCacheId: number | null = null;
+	private blocklist: Blocklist;
+	private isPaused = false;
+
+	private forceScrobble = false;
+	private shouldHaveScrobbled = false;
 
 	private isEditing = false;
 	private setNotEditingTimeout = setTimeout(() => {
@@ -80,16 +98,147 @@ export default class Controller {
 	});
 
 	/**
+	 * Mutates this.currentSong to sync disallowed reason, and returns whether song should scrobble
+	 *
+	 * @returns true if song should scrobble; false if disallowed.
+	 */
+	private async shouldScrobble(): Promise<boolean> {
+		if (this.forceScrobble) {
+			return true;
+		}
+
+		if (!this.currentSong) {
+			return false;
+		}
+
+		if (this.currentSong.parsed.scrobblingDisallowedReason) {
+			return false;
+		}
+
+		if (
+			!(await this.blocklist.shouldScrobbleChannel(
+				this.connector.getChannelId?.(),
+			))
+		) {
+			this.currentSong.parsed.scrobblingDisallowedReason =
+				'ForbiddenChannel';
+			return false;
+		}
+
+		if (this.currentSong?.flags.hasBlockedTag) {
+			this.currentSong.parsed.scrobblingDisallowedReason = 'ForbiddenTag';
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Function that handles updating the scrobble info box
+	 */
+	private async getInfoBoxElement(): Promise<HTMLDivElement | null> {
+		if (
+			!this.connector.scrobbleInfoLocationSelector ||
+			// infobox is disabled in options
+			!(await Options.getOption(
+				Options.USE_INFOBOX,
+				this.connector.meta.id,
+			))
+		) {
+			return null;
+		}
+
+		const parentEl = document.querySelector(
+			this.connector.scrobbleInfoLocationSelector,
+		);
+		if (!parentEl) {
+			return null;
+		}
+
+		// check if infoBoxEl was already created
+		let infoBoxElement = document.querySelector<HTMLDivElement>(
+			'#scrobbler-infobox-el',
+		);
+
+		// check if element is still in the correct place
+		if (infoBoxElement) {
+			if (infoBoxElement.parentElement !== parentEl) {
+				infoBoxElement.remove();
+			} else {
+				return infoBoxElement;
+			}
+		}
+
+		// if it was not in the correct place or didn't exist, create it
+		infoBoxElement = document.createElement('div');
+		infoBoxElement.setAttribute('id', 'scrobbler-infobox-el');
+
+		// style the infobox
+		for (const prop in this.connector.scrobbleInfoStyle) {
+			infoBoxElement.style[prop] =
+				this.connector.scrobbleInfoStyle[prop] ?? '';
+		}
+
+		parentEl.appendChild(infoBoxElement);
+		return infoBoxElement;
+	}
+
+	private async updateInfoBox() {
+		let oldInfoBoxText: string | false = false;
+		const infoBoxElement = await this.getInfoBoxElement();
+		if (!infoBoxElement) {
+			// clean up
+			const infoBoxElement = document.querySelector<HTMLDivElement>(
+				'#scrobbler-infobox-el',
+			);
+			if (infoBoxElement) {
+				infoBoxElement.remove();
+			}
+			return;
+		}
+		const textEl = infoBoxElement.querySelector('span');
+		if (textEl) {
+			oldInfoBoxText = textEl.innerText;
+		}
+
+		const mode = this.getMode();
+		const infoBoxText = Util.getInfoBoxText(mode, this.currentSong);
+
+		// Check if infobox needs to be updated
+		if (!oldInfoBoxText || infoBoxText !== oldInfoBoxText) {
+			const img = document.createElement('img');
+			img.setAttribute(
+				'src',
+				browser.runtime.getURL('./icons/icon_main_48.png'),
+			);
+			img.setAttribute('alt', 'Web Scrobbler state:');
+			img.setAttribute('style', 'height: 1.2em');
+
+			const info = document.createElement('span');
+			info.innerText = infoBoxText;
+
+			// Clear old contents of infoBoxElement
+			while (infoBoxElement.firstChild) {
+				infoBoxElement.removeChild(infoBoxElement.firstChild);
+			}
+			infoBoxElement.appendChild(img);
+			infoBoxElement.appendChild(info);
+		}
+	}
+
+	/**
 	 * @param tabId - Tab ID
 	 * @param connector - Connector match object
 	 * @param isEnabled - Flag indicates initial stage
 	 */
-	constructor(connector: ConnectorMeta, isEnabled: boolean) {
+	constructor(connector: BaseConnector, isEnabled: boolean) {
 		this.connector = connector;
+		this.blocklist = new Blocklist(this.connector.meta.id);
 		this.isEnabled = isEnabled;
 		this.mode = isEnabled ? ControllerMode.Base : ControllerMode.Disabled;
-		this.setMode(this.mode);
-		Options.getOption(Options.SCROBBLE_PODCASTS, connector.id)
+		this.onModeChanged();
+		this.tempMode = null; // temporary default setting for now
+		Options.getOption(Options.SCROBBLE_PODCASTS, connector.meta.id)
 			.then((shouldScrobblePodcasts) => {
 				if (typeof shouldScrobblePodcasts !== 'boolean') {
 					return;
@@ -100,7 +249,9 @@ export default class Controller {
 				debugLog(err, 'error');
 			});
 
-		this.debugLog(`Created controller for ${connector.label} connector`);
+		this.debugLog(
+			`Created controller for ${connector.meta.label} connector`,
+		);
 
 		setupContentListeners(
 			contentListener({
@@ -111,8 +262,8 @@ export default class Controller {
 			}),
 			contentListener({
 				type: 'toggleLove',
-				fn: ({ isLoved }) => {
-					this.toggleLove(isLoved);
+				fn: ({ isLoved, shouldShowNotification }) => {
+					this.toggleLove(isLoved, shouldShowNotification);
 				},
 			}),
 			contentListener({
@@ -156,15 +307,57 @@ export default class Controller {
 			}),
 			contentListener({
 				type: 'disableConnectorUntilTabIsClosed',
+				// eslint-disable-next-line
 				fn: () => this.disableUntilTabIsClosed(),
 			}),
 			contentListener({
 				type: 'getConnectorDetails',
 				fn: () => ({
-					mode: this.mode,
+					mode: this.getMode(),
+					permanentMode: this.mode,
 					song: this.currentSong?.getCloneableData() ?? null,
 				}),
-			})
+			}),
+			contentListener({
+				type: 'forceScrobbleSong',
+				fn: () => {
+					this.forceScrobble = true;
+					if (this.shouldHaveScrobbled) {
+						void this.scrobbleSong();
+					} else {
+						void this.setSongNowPlaying();
+					}
+				},
+			}),
+			contentListener({
+				type: 'getChannelDetails',
+				fn: () => ({
+					connector: this.connector.meta,
+					channelInfo: this.connector.getChannelInfo?.(),
+				}),
+			}),
+			contentListener({
+				type: 'addToBlocklist',
+				fn: async () => {
+					await this.blocklist.addToBlocklist(
+						this.connector.getChannelInfo?.() ?? null,
+					);
+					this.setMode(ControllerMode.Disallowed);
+				},
+			}),
+			contentListener({
+				type: 'removeFromBlocklist',
+				fn: async () => {
+					await this.blocklist.removeFromBlocklist(
+						this.connector.getChannelInfo?.()?.id ?? null,
+					);
+					if (this.shouldHaveScrobbled) {
+						void this.scrobbleSong();
+					} else {
+						void this.setSongNowPlaying();
+					}
+				},
+			}),
 		);
 	}
 
@@ -174,6 +367,7 @@ export default class Controller {
 	 * Called if current song is updated.
 	 */
 	public onSongUpdated(): void {
+		this.updateInfoBox();
 		sendContentMessage({
 			type: 'songUpdate',
 			payload: this.currentSong?.getCloneableData() ?? null,
@@ -184,9 +378,13 @@ export default class Controller {
 	 * Called if a controller mode is changed.
 	 */
 	public onModeChanged(): void {
+		this.updateInfoBox();
 		sendContentMessage({
 			type: 'controllerModeChange',
-			payload: this.mode,
+			payload: {
+				mode: this.getMode(),
+				permanentMode: this.mode,
+			},
 		});
 	}
 
@@ -199,19 +397,24 @@ export default class Controller {
 		switch (event) {
 			case ControllerEvents.SongNowPlaying: {
 				const song = this.getCurrentSong();
-				if (!song || song.flags.isReplaying) {
-					return;
+				if (
+					!song ||
+					song.flags.isReplaying ||
+					!(await this.shouldScrobble()) ||
+					!this.currentSong?.isValid()
+				) {
+					break;
 				}
 				const id = await this.tabId;
 				if (!id) {
-					return;
+					break;
 				}
 
 				sendContentMessage({
 					type: 'showNowPlaying',
 					payload: {
 						song: song.getCloneableData(),
-						connector: this.connector,
+						connector: this.connector.meta,
 					},
 				});
 				break;
@@ -230,25 +433,26 @@ export default class Controller {
 			}
 			case ControllerEvents.SongUnrecognized: {
 				const song = this.getCurrentSong();
-				if (!song) {
-					return;
+				if (!song || !(await this.shouldScrobble())) {
+					break;
 				}
 				const id = await this.tabId;
 				if (!id) {
-					return;
+					break;
 				}
 
 				sendContentMessage({
 					type: 'showSongNotRecognized',
 					payload: {
 						song: song.getCloneableData(),
-						connector: this.connector,
+						connector: this.connector.meta,
 					},
 				});
 				break;
 			}
 		}
-		// do nothing
+
+		this.updateInfoBox();
 	}
 
 	/** Public functions */
@@ -273,7 +477,7 @@ export default class Controller {
 	 */
 	public finish(): void {
 		this.debugLog(
-			`Remove controller for ${this.connector.label} connector`
+			`Remove controller for ${this.connector.meta.label} connector`,
 		);
 		this.resetState();
 	}
@@ -303,6 +507,8 @@ export default class Controller {
 		this.setMode(ControllerMode.Skipped);
 
 		this.currentSong.flags.isSkipped = true;
+		this.shouldHaveScrobbled = false;
+		this.forceScrobble = false;
 
 		this.playbackTimer.reset();
 		this.replayDetectionTimer.reset();
@@ -315,7 +521,7 @@ export default class Controller {
 	 * @returns Connector
 	 */
 	getConnector(): ConnectorMeta {
-		return this.connector;
+		return this.connector.meta;
 	}
 
 	/**
@@ -331,6 +537,16 @@ export default class Controller {
 	 * @returns Controller mode
 	 */
 	getMode(): (typeof ControllerMode)[keyof typeof ControllerMode] {
+		const pausableModes = [
+			ControllerMode.Playing,
+			ControllerMode.Scrobbled,
+		];
+		if (this.tempMode !== null) {
+			return this.tempMode;
+		}
+		if (pausableModes.includes(this.mode) && this.isPaused) {
+			return ControllerMode.Paused;
+		}
 		return this.mode;
 	}
 
@@ -357,7 +573,7 @@ export default class Controller {
 	/**
 	 * Reprocess currently playing song without otherwise changing it.
 	 */
-	async reprocessSong(): Promise<void> {
+	reprocessSong(): void {
 		this.assertSongIsPlaying();
 		if (!assertSongNotNull(this.currentSong)) {
 			return;
@@ -370,13 +586,16 @@ export default class Controller {
 	/**
 	 * Send request to love or unlove current song.
 	 * @param isLoved - Flag indicated song is loved
+	 * @param shouldShowNotification - Flag indicating that a notification should show up
 	 */
-	async toggleLove(isLoved: boolean): Promise<void> {
+	async toggleLove(
+		isLoved: boolean,
+		shouldShowNotification: boolean,
+	): Promise<void> {
 		this.assertSongIsPlaying();
 		if (!assertSongNotNull(this.currentSong)) {
 			return;
 		}
-
 		if (!this.currentSong.isValid()) {
 			throw new Error('No valid song is now playing');
 		}
@@ -385,11 +604,17 @@ export default class Controller {
 		this.currentSong.setLoveStatus(isLoved, true);
 		this.onSongUpdated();
 		try {
+			if (isLoved) {
+				this.setTempMode(ControllerMode.Loved);
+			} else {
+				this.setTempMode(ControllerMode.Unloved);
+			}
 			await sendContentMessage({
 				type: 'toggleLove',
 				payload: {
 					song: this.currentSong.getCloneableData(),
 					isLoved,
+					shouldShowNotification,
 				},
 			});
 		} catch (err) {
@@ -397,6 +622,81 @@ export default class Controller {
 		}
 
 		this.onSongUpdated();
+	}
+
+	/**
+	 * React on love/unlove.
+	 * @param isLoved - Whether song is now liked or unliked
+	 */
+	async onLoveChanged(isLoved: boolean | null): Promise<void> {
+		if (!this.currentSong) {
+			return;
+		}
+
+		/**
+		 * Only update love status for some specific modes
+		 */
+		const loveChangeableModes = [
+			ControllerMode.Playing,
+			ControllerMode.Scrobbled,
+		];
+		if (!loveChangeableModes.includes(this.mode)) {
+			return;
+		}
+
+		/**
+		 * If there has not been definitive state before,
+		 * just change state without sending anything to service.
+		 * We dont want the extension to randomly unlove songs
+		 * on scrobbling service because user didnt do it on
+		 * streaming service.
+		 */
+		if (this.currentSong.flags.isLovedInService === null) {
+			this.currentSong.flags.isLovedInService = isLoved;
+			return;
+		}
+
+		/**
+		 * If suddenly we are not receiving definitive state anymore
+		 * be safe and reset the isloved state
+		 */
+		if (isLoved === null) {
+			this.currentSong.flags.isLovedInService = null;
+			return;
+		}
+
+		/**
+		 * State did not change, don't do anything.
+		 */
+		if (this.currentSong.flags.isLovedInService === isLoved) {
+			return;
+		}
+
+		/**
+		 * Song already had fetched a definitive loved state,
+		 * and this one is different.
+		 * This means user has actively changed it.
+		 * Change if option suggests so.
+		 */
+		this.currentSong.flags.isLovedInService = isLoved;
+		if (
+			await Options.getOption(
+				Options.AUTO_TOGGLE_LOVE,
+				this.connector.meta.id,
+			)
+		) {
+			if (
+				// do not show notification if:
+				// 1. song is already loved and is being toggled to love status
+				// 2. song is already unloved and is being toggled to unlove status
+				(this.currentSong.metadata.userloved === true && isLoved) ||
+				(this.currentSong.metadata.userloved === false && !isLoved)
+			) {
+				return;
+			}
+			// do send notification if song has not yet been (un)loved toggled yet
+			this.toggleLove(isLoved, true);
+		}
 	}
 
 	/**
@@ -422,9 +722,9 @@ export default class Controller {
 			if (newState.isPlaying) {
 				this.debugLog(
 					`State from connector doesn't contain enough information about the playing track: ${toString(
-						newState as Record<string, unknown>
+						newState as Record<string, unknown>,
 					)}`,
-					'warn'
+					'warn',
 				);
 			}
 
@@ -461,6 +761,35 @@ export default class Controller {
 		this.onModeChanged();
 	}
 
+	/**
+	 * Checks if the temp icon/mode is visible.
+	 */
+	private isTempIconVisible() {
+		return this.timeoutId !== undefined;
+	}
+
+	/**
+	 * Temporarily set the mode of the controller,
+	 * then returns to previous mode after 5 seconds.
+	 *
+	 * @param newMode - new controller mode to be set
+	 *
+	 */
+	private setTempMode(newMode: ControllerModeStr) {
+		if (this.isTempIconVisible()) {
+			clearTimeout(this.timeoutId);
+			this.timeoutId = undefined;
+		}
+		const TEMP_ICON_DISPLAY_DURATION = 5000;
+		this.tempMode = newMode;
+		this.onModeChanged();
+		this.timeoutId = setTimeout(() => {
+			this.timeoutId = undefined;
+			this.tempMode = null;
+			this.onModeChanged();
+		}, TEMP_ICON_DISPLAY_DURATION);
+	}
+
 	private dispatchEvent(event: string): void {
 		if (!event) {
 			throw new Error(`Unknown event: ${event}`);
@@ -478,12 +807,15 @@ export default class Controller {
 		 * We've hit a new song (or replaying the previous one)
 		 * clear any previous song and its bindings.
 		 */
+		this.isPaused = false;
 		this.resetState();
-		this.currentSong = new Song(newState, this.connector);
+		this.currentSong = new Song(newState, this.connector.meta);
 		this.currentSong.flags.isReplaying = this.isReplayingSong;
 
 		this.debugLog(
-			`New song detected: ${toString(newState as Record<string, string>)}`
+			`New song detected: ${toString(
+				newState as Record<string, string>,
+			)}`,
 		);
 
 		if (!this.shouldScrobblePodcasts && newState.isPodcast) {
@@ -512,8 +844,7 @@ export default class Controller {
 		 * the timer is started.
 		 */
 		if (!newState.isPlaying) {
-			this.playbackTimer.pause();
-			this.replayDetectionTimer.pause();
+			this.setPaused();
 		}
 
 		void this.processSong();
@@ -524,7 +855,7 @@ export default class Controller {
 	 * Process connector state as current one.
 	 * @param newState - Connector state
 	 */
-	private processCurrentState(newState: State): void {
+	private async processCurrentState(newState: State): Promise<void> {
 		if (!assertSongNotNull(this.currentSong)) {
 			return;
 		}
@@ -532,13 +863,21 @@ export default class Controller {
 			return;
 		}
 
-		const { currentTime, isPlaying, trackArt, duration } = newState;
+		const {
+			currentTime,
+			isPlaying,
+			trackArt,
+			duration,
+			scrobblingDisallowedReason,
+		} = newState;
 		const isPlayingStateChanged =
 			this.currentSong.parsed.isPlaying !== isPlaying;
 
 		this.currentSong.parsed.currentTime = currentTime;
 		this.currentSong.parsed.isPlaying = isPlaying;
 		this.currentSong.parsed.trackArt = trackArt;
+		this.currentSong.parsed.scrobblingDisallowedReason =
+			scrobblingDisallowedReason;
 
 		if (this.isNeedToUpdateDuration(newState) && duration) {
 			this.updateSongDuration(duration);
@@ -546,6 +885,14 @@ export default class Controller {
 
 		if (isPlayingStateChanged && isPlaying !== void 0) {
 			this.onPlayingStateChanged(isPlaying);
+		} else if (
+			this.mode === ControllerMode.Disallowed &&
+			(await this.shouldScrobble()) &&
+			isPlaying
+		) {
+			// we need to unset disallowed whenever needed.
+			// this is not necessarily tied to pausing/unpausing
+			this.setSongNowPlaying();
 		}
 	}
 
@@ -557,6 +904,8 @@ export default class Controller {
 
 		this.playbackTimer.reset();
 		this.replayDetectionTimer.reset();
+		this.shouldHaveScrobbled = false;
+		this.forceScrobble = false;
 
 		this.currentSong = null;
 	}
@@ -565,30 +914,52 @@ export default class Controller {
 	 * Process song using pipeline module.
 	 */
 	private async processSong(): Promise<void> {
-		this.setMode(ControllerMode.Loading);
 		if (!assertSongNotNull(this.currentSong)) {
 			return;
 		}
+		this.shouldHaveScrobbled = false;
+		this.forceScrobble = false;
 
-		if (!(await this.pipeline.process(this.currentSong, this.connector))) {
+		if (await this.shouldScrobble()) {
+			this.setMode(ControllerMode.Loading);
+		} else {
+			this.setMode(ControllerMode.Disallowed);
+		}
+
+		if (
+			!(await this.pipeline.process(
+				this.currentSong,
+				this.connector.meta,
+			))
+		) {
 			return;
 		}
 
 		this.debugLog(
-			`Song finished processing: ${this.currentSong.toString()}`
+			`Song finished processing: ${this.currentSong.toString()}`,
 		);
 
-		if (this.currentSong.isValid()) {
-			// Processing cleans this flag
-			this.currentSong.flags.isMarkedAsPlaying = false;
+		// Processing cleans this flag
+		this.currentSong.flags.isMarkedAsPlaying = false;
 
-			await this.updateTimers(this.currentSong.getDuration());
+		await this.updateTimers(this.currentSong.getDuration());
 
+		/*
+		 * If the song is playing, mark it immediately;
+		 * otherwise will be flagged in isPlaying binding.
+		 */
+		if (!this.currentSong.isValid()) {
+			this.setSongNotRecognized();
+		} else if (!(await this.shouldScrobble())) {
+			this.setMode(ControllerMode.Disallowed);
+		} else if (this.currentSong.parsed.isPlaying) {
 			/*
 			 * If the song is playing, mark it immediately;
 			 * otherwise will be flagged in isPlaying binding.
 			 */
-			if (this.currentSong.parsed.isPlaying) {
+			if (!(await this.shouldScrobble())) {
+				this.setMode(ControllerMode.Disallowed);
+			} else if (this.currentSong.parsed.isPlaying) {
 				/*
 					* If playback timer is expired, then the extension
 					* will scrobble song immediately, and there's no need
@@ -624,6 +995,9 @@ export default class Controller {
 
 		this.currentSong.resetData();
 
+		this.shouldHaveScrobbled = false;
+		this.forceScrobble = false;
+
 		this.playbackTimer.update(null);
 		this.replayDetectionTimer.update(null);
 	}
@@ -632,25 +1006,29 @@ export default class Controller {
 	 * Called when playing state is changed.
 	 * @param value - New playing state
 	 */
-	private onPlayingStateChanged(value: boolean | null): void {
+	private async onPlayingStateChanged(value: boolean | null): Promise<void> {
 		this.debugLog(`isPlaying state changed to ${String(value)}`);
 
 		if (value && this.currentSong) {
+			this.setResumedPlaying();
 			this.playbackTimer.resume();
 			this.replayDetectionTimer.resume();
 
 			const { isMarkedAsPlaying } = this.currentSong.flags;
 
 			// Maybe the song was not marked as playing yet
-			if (!isMarkedAsPlaying && this.currentSong.isValid()) {
+			if (
+				!isMarkedAsPlaying &&
+				this.currentSong.isValid() &&
+				(await this.shouldScrobble())
+			) {
 				void this.setSongNowPlaying();
 			} else {
 				// Resend current mode
-				this.setMode(this.mode);
+				this.onModeChanged();
 			}
 		} else {
-			this.playbackTimer.pause();
-			this.replayDetectionTimer.pause();
+			this.setPaused();
 		}
 	}
 
@@ -702,9 +1080,7 @@ export default class Controller {
 
 		this.currentSong.parsed.duration = duration;
 
-		if (this.currentSong.isValid()) {
-			void this.updateTimers(duration);
-		}
+		void this.updateTimers(duration);
 	}
 
 	/**
@@ -712,20 +1088,18 @@ export default class Controller {
 	 * @param duration - Song duration in seconds
 	 */
 	private async updateTimers(
-		duration: number | null | undefined
+		duration: number | null | undefined,
 	): Promise<void> {
 		if (this.playbackTimer.isExpired()) {
 			this.debugLog('Attempt to update expired timers', 'warn');
 			return;
 		}
 
-		const percent = await Options.getOption(
+		const rawPercent = await Options.getOption(
 			Options.SCROBBLE_PERCENT,
-			this.connector.id
+			this.connector.meta.id,
 		);
-		if (typeof percent !== 'number') {
-			return;
-		}
+		const percent = parseScrobblePercent(rawPercent);
 
 		const secondsToScrobble = getSecondsToScrobble(duration, percent);
 
@@ -737,7 +1111,7 @@ export default class Controller {
 			this.debugLog(
 				`The song will be scrobbled in ${
 					remainedSeconds ?? -999
-				} seconds`
+				} seconds`,
 			);
 			this.debugLog(`The song will be repeated in ${duration} seconds`);
 		} else {
@@ -750,9 +1124,26 @@ export default class Controller {
 	 * now playing.
 	 */
 	private async setSongNowPlaying(): Promise<void> {
-		if (!assertSongNotNull(this.currentSong)) {
+		if (
+			!assertSongNotNull(this.currentSong) ||
+			!this.currentSong.isValid() ||
+			!(await this.shouldScrobble())
+		) {
 			return;
 		}
+
+		/**
+		 * Sometimes a song may change state before processing is done.
+		 * This can cause race condition especially with the blocked tags pipeline
+		 * which decides whether a song should be allowed to be played asynchronously.
+		 * For this reason we must check again here if the song is loading.
+		 */
+		if (!this.currentSong.flags.finishedProcessing) {
+			this.debugLog('Song set as loading');
+			this.setMode(ControllerMode.Loading);
+			return;
+		}
+
 		this.currentSong.flags.isMarkedAsPlaying = true;
 
 		const results = await sendContentMessage({
@@ -771,6 +1162,48 @@ export default class Controller {
 		}
 
 		this.dispatchEvent(ControllerEvents.SongNowPlaying);
+	}
+
+	private async setPaused(): Promise<void> {
+		this.playbackTimer.pause();
+		this.replayDetectionTimer.pause();
+
+		if (
+			!assertSongNotNull(this.currentSong) ||
+			!this.currentSong.isValid() ||
+			!(await this.shouldScrobble())
+		) {
+			return;
+		}
+
+		this.isPaused = true;
+		this.onModeChanged();
+		await sendContentMessage({
+			type: 'setPaused',
+			payload: {
+				song: this.currentSong.getCloneableData(),
+			},
+		});
+	}
+
+	private async setResumedPlaying(): Promise<void> {
+		this.isPaused = false;
+
+		if (
+			!assertSongNotNull(this.currentSong) ||
+			!this.currentSong.isValid() ||
+			!(await this.shouldScrobble())
+		) {
+			return;
+		}
+
+		this.onModeChanged();
+		await sendContentMessage({
+			type: 'setResumedPlaying',
+			payload: {
+				song: this.currentSong.getCloneableData(),
+			},
+		});
 	}
 
 	/**
@@ -801,10 +1234,39 @@ export default class Controller {
 			...disabledTabList,
 			[currentTab ?? -1]: {
 				...(disabledTabList?.[currentTab ?? -1] ?? {}),
-				[this.connector.id]: true,
+				[this.connector.meta.id]: true,
 			},
 		});
 		this.setEnabled(false);
+	}
+
+	/**
+	 * Tries to save failed scrobble due to disallowed/unrecognized.
+	 *
+	 * @returns true if scrobble is failed; false if should scrobble
+	 */
+	private async saveFailedScrobble(): Promise<boolean> {
+		if (!assertSongNotNull(this.currentSong)) {
+			return true;
+		}
+
+		if (!(await this.shouldScrobble())) {
+			this.scrobbleCacheId = await scrobbleCache.pushScrobble({
+				song: this.currentSong.getCloneableData(),
+				status: ScrobbleStatus.DISALLOWED,
+			});
+			this.shouldHaveScrobbled = true;
+			return true;
+		}
+		if (!this.currentSong.isValid()) {
+			this.scrobbleCacheId = await scrobbleCache.pushScrobble({
+				song: this.currentSong.getCloneableData(),
+				status: ScrobbleStatus.INVALID,
+			});
+			this.shouldHaveScrobbled = true;
+			return true;
+		}
+		return false;
 	}
 
 	/**
@@ -815,6 +1277,14 @@ export default class Controller {
 	private async scrobbleSong(): Promise<void> {
 		if (!assertSongNotNull(this.currentSong)) {
 			return;
+		}
+
+		if (await this.saveFailedScrobble()) {
+			return;
+		}
+		if (this.scrobbleCacheId) {
+			scrobbleCache.deleteScrobbles([this.scrobbleCacheId]);
+			this.scrobbleCacheId = null;
 		}
 
 		// dont scrobble until user stopped editing.
@@ -833,18 +1303,19 @@ export default class Controller {
 		const results = await sendContentMessage({
 			type: 'scrobble',
 			payload: {
-				song: this.currentSong.getCloneableData(),
+				songs: [this.currentSong.getCloneableData()],
+				currentlyPlaying: true,
 			},
 		});
 
-		if (isAnyResult(results, ServiceCallResult.RESULT_OK)) {
+		if (isAnyResult(results[0], ServiceCallResult.RESULT_OK)) {
 			this.debugLog('Scrobbled successfully');
 
 			this.currentSong.flags.isScrobbled = true;
 			this.setMode(ControllerMode.Scrobbled);
 
 			this.onSongUpdated();
-		} else if (areAllResults(results, ServiceCallResult.RESULT_IGNORE)) {
+		} else if (areAllResults(results[0], ServiceCallResult.RESULT_IGNORE)) {
 			this.debugLog('Song is ignored by service');
 			this.setMode(ControllerMode.Ignored);
 		} else {

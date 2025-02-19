@@ -1,14 +1,18 @@
-import { For, Resource, ResourceActions, Show } from 'solid-js';
+import type { Resource, ResourceActions } from 'solid-js';
+import { For, Show } from 'solid-js';
 import styles from './components.module.scss';
-import * as Options from '@/core/storage/options';
+import type * as Options from '@/core/storage/options';
 import { t } from '@/util/i18n';
-import StorageWrapper from '@/core/storage/wrapper';
-import * as BrowserStorage from '@/core/storage/browser-storage';
-import Check from '@suid/icons-material/CheckOutlined';
-import Close from '@suid/icons-material/CloseOutlined';
-import RestartAlt from '@suid/icons-material/RestartAltOutlined';
-import IndeterminateCheckBox from '@suid/icons-material/IndeterminateCheckBoxOutlined';
-import { ConnectorMeta } from '@/core/connectors';
+import type StorageWrapper from '@/core/storage/wrapper';
+import type * as BrowserStorage from '@/core/storage/browser-storage';
+import {
+	CheckOutlined,
+	CloseOutlined,
+	RestartAltOutlined,
+	IndeterminateCheckBoxOutlined,
+} from '@/ui/components/icons';
+import type { ConnectorMeta } from '@/core/connectors';
+import { clamp } from '@/util/util';
 
 /**
  * Checkbox option component
@@ -21,18 +25,19 @@ export function Checkbox(props: {
 		e: InputEvent & {
 			currentTarget: HTMLInputElement;
 			target: Element;
-		}
+		},
 	) => void;
 }) {
-	const { title, label, isChecked, onInput } = props;
 	return (
 		<div class={styles.checkboxOption}>
-			<label title={title} class={styles.bigLabel}>
-				{label}
+			<label title={props.title} class={styles.bigLabel}>
+				{props.label}
 				<input
 					type="checkbox"
-					checked={isChecked()}
-					onInput={onInput}
+					checked={props.isChecked()}
+					onInput={(e) => {
+						props.onInput(e);
+					}}
 				/>
 				<span class={styles.checkboxWrapper}>
 					<span class={styles.checkbox} />
@@ -40,6 +45,35 @@ export function Checkbox(props: {
 			</label>
 		</div>
 	);
+}
+
+/**
+ * Handles clicks and keyboard inputs for {@link SummaryCheckbox}.
+ *
+ * @param e - input event that triggered checkbox change.
+ * @param id - id of checkbox element.
+ * @param onInput - input event to run for checkbox.
+ */
+function handleSummaryCheckboxInput(
+	event: Event & {
+		currentTarget: HTMLLabelElement;
+		target: Element;
+	},
+	id: string,
+	onInput: (
+		e: Event & {
+			currentTarget: HTMLInputElement;
+			target: Element;
+		},
+	) => void,
+) {
+	event.preventDefault();
+	const checkbox = document.getElementById(id) as HTMLInputElement;
+	checkbox.checked = !checkbox.checked;
+	onInput({
+		...event,
+		currentTarget: checkbox,
+	});
 }
 
 /**
@@ -55,34 +89,36 @@ export function SummaryCheckbox(props: {
 		e: Event & {
 			currentTarget: HTMLInputElement;
 			target: Element;
-		}
+		},
 	) => void;
 }) {
-	const { title, label, id, isChecked, onInput } = props;
 	return (
 		<div class={`${styles.checkboxOption} ${styles.summaryCheckbox}`}>
-			<span title={title} class={styles.summarySpan}>
-				{label}
+			<span title={props.title} class={styles.summarySpan}>
+				{props.label}
 				<label
 					onClick={(e) => {
 						// Safari doesn't like labeled checkboxes in detail summaries
 						// hacky but it works, hopefully it doesnt stop working
-						e.preventDefault();
-						const checkbox = document.getElementById(
-							id
-						) as HTMLInputElement;
-						checkbox.checked = !checkbox.checked;
-						onInput({
-							...e,
-							currentTarget: checkbox,
-						});
+						handleSummaryCheckboxInput(e, props.id, props.onInput);
 					}}
+					onKeyUp={(e) => {
+						// keyboard navigation does not like checkbox being inside summary.
+						// handle this behavior ourselves.
+						if (e.key !== ' ') {
+							return;
+						}
+						handleSummaryCheckboxInput(e, props.id, props.onInput);
+					}}
+					title={t('menuEnableConnector', props.label)}
 				>
 					<input
-						id={id}
+						id={props.id}
 						type="checkbox"
-						checked={isChecked()}
-						onInput={onInput}
+						checked={props.isChecked()}
+						onInput={(e) => {
+							props.onInput(e);
+						}}
 					/>
 					<span class={styles.checkboxWrapper}>
 						<span class={styles.checkbox} />
@@ -108,49 +144,58 @@ export function RadioButtons(props: {
 		e: Event & {
 			currentTarget: HTMLInputElement;
 			target: Element;
-		}
+		},
 	) => void;
 	reset?: (
 		e: Event & {
 			currentTarget: HTMLButtonElement;
 			target: Element;
-		}
+		},
 	) => void;
+	labelledby: string;
 }) {
-	const { buttons, name, value, onChange, reset } = props;
 	return (
-		<ul class={styles.radioButtons}>
-			<For each={buttons}>
+		<div
+			class={`${styles.radioButtons} ${styles.optionList}`}
+			role="radiogroup"
+			aria-labelledby={props.labelledby}
+		>
+			<For each={props.buttons}>
 				{(button) => (
-					<li>
+					<div class={styles.radioButton}>
 						<input
 							type="radio"
-							id={`${name}-${button.value}`}
-							name={name}
+							id={`${props.name}-${button.value}`}
+							name={props.name}
 							value={button.value}
-							checked={value() === button.value}
-							onChange={onChange}
+							checked={props.value() === button.value}
+							onChange={props.onChange}
 						/>
 						<label
-							for={`${name}-${button.value}`}
-							data-name={name}
+							for={`${props.name}-${button.value}`}
+							data-name={props.name}
 							title={button.title}
 							class={styles.radioLabel}
 						>
 							{button.label}
 						</label>
-					</li>
+					</div>
 				)}
 			</For>
-			<Show when={reset}>
-				<li>
-					<button class={styles.resetButton} onClick={reset}>
-						<RestartAlt />
+			<Show when={props.reset}>
+				<div class={styles.radioButton}>
+					<button
+						class={`${styles.button} ${styles.shiftLeft}`}
+						onClick={(e) => {
+							props.reset?.(e);
+						}}
+					>
+						<RestartAltOutlined />
 						{t('buttonReset')}
 					</button>
-				</li>
+				</div>
 			</Show>
-		</ul>
+		</div>
 	);
 }
 
@@ -158,7 +203,7 @@ export function RadioButtons(props: {
  * Checkbox made for connector options
  */
 export function ConnectorOptionEntry<
-	K extends keyof Options.ConnectorOptions
+	K extends keyof Options.ConnectorOptions,
 >(props: {
 	options: Resource<Options.ConnectorOptions | null>;
 	setOptions: ResourceActions<
@@ -171,24 +216,22 @@ export function ConnectorOptionEntry<
 	connector: K;
 	key: keyof Options.ConnectorOptions[K];
 }) {
-	const {
-		options,
-		setOptions,
-		connectorOptions,
-		i18ntitle,
-		i18nlabel,
-		connector,
-		key,
-	} = props;
 	return (
 		<li>
 			<Checkbox
-				title={t(i18ntitle)}
-				label={t(i18nlabel)}
-				isChecked={() => options()?.[connector]?.[key] as boolean}
+				title={t(props.i18ntitle)}
+				label={t(props.i18nlabel)}
+				isChecked={() =>
+					props.options()?.[props.connector]?.[props.key] as boolean
+				}
 				onInput={(e) => {
-					setOptions.mutate((o) => {
-						if (!o) return o;
+					const connector = props.connector;
+					const key = props.key;
+					const connectorOptions = props.connectorOptions;
+					props.setOptions.mutate((o) => {
+						if (!o) {
+							return o;
+						}
 						const newOptions = {
 							...o,
 							[connector]: {
@@ -219,17 +262,19 @@ export function GlobalOptionEntry(props: {
 	globalOptions: StorageWrapper<typeof BrowserStorage.OPTIONS>;
 	key: keyof Options.GlobalOptions;
 }) {
-	const { options, setOptions, i18ntitle, i18nlabel, globalOptions, key } =
-		props;
 	return (
 		<li>
 			<Checkbox
-				title={t(i18ntitle)}
-				label={t(i18nlabel)}
-				isChecked={() => options()?.[key] as boolean}
+				title={t(props.i18ntitle)}
+				label={t(props.i18nlabel)}
+				isChecked={() => props.options()?.[props.key] as boolean}
 				onInput={(e) => {
-					setOptions.mutate((o) => {
-						if (!o) return o;
+					const key = props.key;
+					const globalOptions = props.globalOptions;
+					props.setOptions.mutate((o) => {
+						if (!o) {
+							return o;
+						}
 						const newOptions = {
 							...o,
 							[key]: e.currentTarget.checked,
@@ -238,6 +283,117 @@ export function GlobalOptionEntry(props: {
 						return newOptions;
 					});
 				}}
+			/>
+		</li>
+	);
+}
+
+/**
+ * Range style input
+ */
+export function RangeOptionEntry(props: {
+	options: Resource<Options.GlobalOptions | null>;
+	setOptions: ResourceActions<
+		Options.GlobalOptions | null | undefined,
+		unknown
+	>;
+	min: number;
+	max: number;
+	prefixi18n: string;
+	suffixi18n: string;
+	numberType: 'percent';
+	globalOptions: StorageWrapper<typeof BrowserStorage.OPTIONS>;
+	key: keyof Options.GlobalOptions;
+}) {
+	return (
+		<li
+			class={styles.rangeInput}
+			role="group"
+			aria-label={`${t(props.prefixi18n)} ${
+				props.options()?.[props.key] as number
+			}% ${t(props.suffixi18n)}`}
+		>
+			<div>
+				<span class={styles.rangeInputLabel}>
+					{t(props.prefixi18n)}
+				</span>
+				<div
+					class={`${styles.inputWrapper} ${styles[props.numberType]}`}
+				>
+					<input
+						type="number"
+						min={props.min}
+						max={props.max}
+						value={props.options()?.[props.key] as number}
+						class={styles.rangeNumberInput}
+						onChange={(e) => {
+							const key = props.key;
+							const globalOptions = props.globalOptions;
+							const min = props.min;
+							const max = props.max;
+							props.setOptions.mutate((o) => {
+								if (!o) {
+									return o;
+								}
+								const newOptions = {
+									...o,
+									[key]: clamp(
+										min,
+										parseInt(e.currentTarget.value),
+										max,
+									),
+								};
+								globalOptions.set(newOptions);
+								return newOptions;
+							});
+						}}
+						title={`${t(props.prefixi18n)} ${
+							props.options()?.[props.key] as number
+						}% ${t(props.suffixi18n)}`}
+					/>
+				</div>
+				<span class={styles.rangeInputLabel}>
+					{t(props.suffixi18n)}
+				</span>
+			</div>
+			<input
+				type="range"
+				min={props.min}
+				max={props.max}
+				value={props.options()?.[props.key] as number}
+				class={styles.rangeSelection}
+				onInput={(e) => {
+					// dont actually apply it here; we'll get ratelimited REAL fast
+					const key = props.key;
+					props.setOptions.mutate((o) => {
+						if (!o) {
+							return o;
+						}
+						const newOptions = {
+							...o,
+							[key]: parseInt(e.currentTarget.value),
+						};
+						return newOptions;
+					});
+				}}
+				onChange={(e) => {
+					const key = props.key;
+					const globalOptions = props.globalOptions;
+					props.setOptions.mutate((o) => {
+						if (!o) {
+							return o;
+						}
+						const newOptions = {
+							...o,
+							[key]: parseInt(e.currentTarget.value),
+						};
+						globalOptions.set(newOptions);
+						return newOptions;
+					});
+				}}
+				title={`${t(props.prefixi18n)} ${
+					props.options()?.[props.key] as number
+				}% ${t(props.suffixi18n)}`}
 			/>
 		</li>
 	);
@@ -264,74 +420,87 @@ export function TripleCheckbox(props: {
 	state: () => TripleCheckboxState;
 	onInput: (state: TripleCheckboxState) => void;
 }) {
-	const { title, label, id, state, onInput } = props;
 	return (
 		<div class={styles.tripleCheckboxOption}>
-			<span title={title}>
-				{label}
-				<div class={styles.tripleCheckboxWrapper}>
+			<span title={props.title}>
+				{props.label}
+				<div
+					class={styles.tripleCheckboxWrapper}
+					role="radiogroup"
+					aria-label={props.label}
+				>
 					<label
 						class={`${styles.tripleCheckboxLabel} ${
 							styles.unchecked
 						}${
-							state() === TripleCheckboxState.Unchecked
+							props.state() === TripleCheckboxState.Unchecked
 								? ` ${styles.activeBox}`
 								: ''
 						}`}
+						title={t('optionsDisabled')}
 					>
 						<input
 							class={styles.tripleCheckbox}
 							type="radio"
 							value="unchecked"
-							name={`${id}-${label}`}
-							checked={state() === TripleCheckboxState.Unchecked}
+							name={`${props.id}-${props.label}`}
+							checked={
+								props.state() === TripleCheckboxState.Unchecked
+							}
 							onInput={() =>
-								onInput(TripleCheckboxState.Unchecked)
+								props.onInput(TripleCheckboxState.Unchecked)
 							}
 						/>
-						<Close />
+						<CloseOutlined />
 					</label>
 					<label
 						class={`${styles.tripleCheckboxLabel} ${
 							styles.indeterminate
 						}${
-							state() === TripleCheckboxState.Indeterminate
+							props.state() === TripleCheckboxState.Indeterminate
 								? ` ${styles.activeBox}`
 								: ''
 						}`}
+						title={t('optionsIndeterminate')}
 					>
 						<input
 							class={styles.tripleCheckbox}
 							type="radio"
 							value="indeterminate"
-							name={`${id}-${label}`}
+							name={`${props.id}-${props.label}`}
 							checked={
-								state() === TripleCheckboxState.Indeterminate
+								props.state() ===
+								TripleCheckboxState.Indeterminate
 							}
 							onInput={() =>
-								onInput(TripleCheckboxState.Indeterminate)
+								props.onInput(TripleCheckboxState.Indeterminate)
 							}
 						/>
-						<IndeterminateCheckBox />
+						<IndeterminateCheckBoxOutlined />
 					</label>
 					<label
 						class={`${styles.tripleCheckboxLabel} ${
 							styles.checked
 						}${
-							state() === TripleCheckboxState.Checked
+							props.state() === TripleCheckboxState.Checked
 								? ` ${styles.activeBox}`
 								: ''
 						}`}
+						title={t('optionsEnabled')}
 					>
 						<input
 							class={styles.tripleCheckbox}
 							type="radio"
 							value="checked"
-							name={`${id}-${label}`}
-							checked={state() === TripleCheckboxState.Checked}
-							onInput={() => onInput(TripleCheckboxState.Checked)}
+							name={`${props.id}-${props.label}`}
+							checked={
+								props.state() === TripleCheckboxState.Checked
+							}
+							onInput={() =>
+								props.onInput(TripleCheckboxState.Checked)
+							}
 						/>
-						<Check />
+						<CheckOutlined />
 					</label>
 				</div>
 			</span>
@@ -356,32 +525,26 @@ export function ConnectorTripleCheckbox(props: {
 		typeof BrowserStorage.CONNECTORS_OVERRIDE_OPTIONS
 	>;
 }) {
-	const {
-		title,
-		label,
-		connector,
-		option,
-		overrideOptions,
-		connectorOverrideOptions,
-		setOverrideOptions,
-	} = props;
 	return (
 		<TripleCheckbox
-			title={title}
-			label={label}
-			id={connector.id}
+			title={props.title}
+			label={props.label}
+			id={props.connector.id}
 			state={() => {
-				const override = overrideOptions()?.[connector.id];
-				if (!override || !(option in override)) {
+				const override = props.overrideOptions()?.[props.connector.id];
+				if (!override || !(props.option in override)) {
 					return TripleCheckboxState.Indeterminate;
 				}
-				if (override[option]) {
+				if (override[props.option]) {
 					return TripleCheckboxState.Checked;
 				}
 				return TripleCheckboxState.Unchecked;
 			}}
 			onInput={(state) => {
-				setOverrideOptions.mutate((o) => {
+				const connector = props.connector;
+				const option = props.option;
+				const connectorOverrideOptions = props.connectorOverrideOptions;
+				props.setOverrideOptions.mutate((o) => {
 					const newOptions = {
 						...(o ?? {}),
 					};

@@ -5,12 +5,16 @@
 
 import browser from 'webextension-polyfill';
 
+// TODO: improve across the board
+
 /**
  * Initializes the theme from storage. To be run on load.
  */
 export async function initializeThemes() {
-	const theme = (await browser.storage.sync.get('theme')).theme;
+	// eslint-disable-next-line
+	const theme = (await browser.storage.sync.get('theme')).theme as string;
 	if (theme) {
+		// eslint-disable-next-line
 		document.body.classList.add(await processTheme(theme));
 		return;
 	}
@@ -25,11 +29,25 @@ export async function initializeThemes() {
  */
 export async function updateTheme(theme: ModifiedTheme) {
 	document.body.className = '';
-	document.body.classList.add(await processTheme(theme));
+	document.body.classList.add(processTheme(theme));
 	await browser.storage.sync.set({
 		theme,
 	});
 }
+
+/**
+ * @returns true if user has dark theme enabled on system/browser level; false otherwise
+ */
+const prefersDarkTheme = () =>
+	window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+/**
+ * @returns true if user has high contrast mode enabled on system/browser level; false otherwise
+ */
+const usesHighContrast = () =>
+	window.matchMedia(
+		'(forced-colors: active), (prefers-contrast: more), (-ms-high-contrast: active)',
+	).matches;
 
 /**
  * Process the current theme, to get the correct display theme for themes that have multiple possibilities
@@ -37,22 +55,32 @@ export async function updateTheme(theme: ModifiedTheme) {
  * @param theme - current theme
  * @returns the corresponding display theme
  */
-async function processTheme(theme: string) {
+function processTheme(theme: string) {
 	if (theme === 'theme-system') {
-		if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-			return 'theme-dark';
-		}
-		return 'theme-light';
+		const themeColor = prefersDarkTheme() ? 'dark' : 'light';
+		const highContrastString = usesHighContrast() ? 'high-contrast-' : '';
+		return `theme-${highContrastString}${themeColor}`;
 	}
 	return theme;
 }
 
-type Theme = 'system' | 'dark' | 'light';
+type Theme =
+	| 'system'
+	| 'dark'
+	| 'light'
+	| 'high-contrast-dark'
+	| 'high-contrast-light';
 export type ModifiedTheme = `theme-${Theme}`;
 
-export const themeList: Theme[] = ['system', 'dark', 'light'];
+export const themeList: Theme[] = [
+	'system',
+	'dark',
+	'light',
+	'high-contrast-dark',
+	'high-contrast-light',
+];
 export const modifiedThemeList = themeList.map(
-	(theme) => `theme-${theme}`
+	(theme) => `theme-${theme}`,
 ) as ModifiedTheme[];
 
 /**
@@ -61,5 +89,9 @@ export const modifiedThemeList = themeList.map(
  * @returns current theme
  */
 export async function getTheme(): Promise<ModifiedTheme> {
-	return (await browser.storage.sync.get('theme')).theme || 'theme-system';
+	// eslint-disable-next-line
+	return (
+		((await browser.storage.sync.get('theme')).theme as ModifiedTheme) ||
+		'theme-system'
+	);
 }

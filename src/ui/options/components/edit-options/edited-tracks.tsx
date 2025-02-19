@@ -1,14 +1,14 @@
 import { t } from '@/util/i18n';
-import { For, Setter, createResource } from 'solid-js';
-import * as Options from '@/core/storage/options';
-import * as BrowserStorage from '@/core/storage/browser-storage';
+import type { Setter } from 'solid-js';
+import { For, createMemo, createResource } from 'solid-js';
+import type * as Options from '@/core/storage/options';
 import styles from '../components.module.scss';
-import Delete from '@suid/icons-material/DeleteOutlined';
+import { DeleteOutlined } from '@/ui/components/icons';
 import { ExportEdits, ImportEdits, ViewEdits } from './util';
-import { ModalType } from '../navigator';
+import type { ModalType } from '../navigator';
+import * as BrowserStorage from '@/core/storage/browser-storage';
 
 const localCache = BrowserStorage.getStorage(BrowserStorage.LOCAL_CACHE);
-const [edits, { mutate }] = createResource(localCache.get.bind(localCache));
 
 /**
  * Component that allows the user to see, import, and export track metadata edits.
@@ -21,7 +21,11 @@ export default function EditedTracks(props: {
 		<>
 			<h2>{t('optionsEditedTracks')}</h2>
 			<p>{t('optionsEditedTracksDesc')}</p>
-			<div class={styles.buttonContainer}>
+			<div
+				class={styles.buttonContainer}
+				role="group"
+				aria-label={t('optionsEditedTracks')}
+			>
 				<ViewEdits
 					setActiveModal={props.setActiveModal}
 					modal={props.modal}
@@ -31,7 +35,7 @@ export default function EditedTracks(props: {
 					editWrapper={localCache}
 					filename="local-cache.json"
 				/>
-				<ImportEdits editWrapper={localCache} mutate={mutate} />
+				<ImportEdits editWrapper={localCache} />
 			</div>
 		</>
 	);
@@ -42,15 +46,16 @@ export default function EditedTracks(props: {
  * To be displayed in a modal.
  */
 export function EditsModal() {
+	const [edits, { mutate }] = createResource(localCache.get.bind(localCache));
 	return (
 		<>
 			<h1>
 				{t(
 					'optionsEditedTracksPopupTitle',
-					Object.keys(edits() ?? {}).length.toString()
+					Object.keys(edits() ?? {}).length.toString(),
 				)}
 			</h1>
-			<ul>
+			<ul class={styles.optionList}>
 				<For each={Object.entries(edits() ?? {})}>
 					{([key, value]) => (
 						<TrackInfo key={key} track={value} mutate={mutate} />
@@ -67,31 +72,40 @@ export function EditsModal() {
 function TrackInfo(props: {
 	key: string;
 	track: Options.SavedEdit;
-	mutate: Setter<{
-		[key: string]: Options.SavedEdit;
-	} | null>;
+	mutate: Setter<
+		| {
+				[key: string]: Options.SavedEdit;
+		  }
+		| null
+		| undefined
+	>;
 }) {
+	const label = createMemo(
+		() => `${props.track.artist} - ${props.track.track}`,
+	);
 	return (
 		<li class={styles.deleteListing}>
 			<button
-				class={styles.deleteEditButton}
+				class={`${styles.button} ${styles.small} ${styles.marginRight}`}
 				onClick={(event) => {
 					event.stopPropagation();
+					const key = props.key;
 					props.mutate((e) => {
-						if (!e) return e;
-						delete e[props.key];
+						if (!e) {
+							return e;
+						}
+						delete e[key];
 						localCache.set(e);
 						return {
 							...e,
 						};
 					});
 				}}
+				title={t('optionsDelete', label())}
 			>
-				<Delete />
+				<DeleteOutlined />
 			</button>
-			<span>
-				{props.track.artist} - {props.track.track}
-			</span>
+			<span>{label()}</span>
 		</li>
 	);
 }

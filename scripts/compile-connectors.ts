@@ -1,25 +1,26 @@
 import { exec } from 'child_process';
-import { PluginOption } from 'vite';
+import type { PluginOption } from 'vite';
 import fs from 'fs-extra';
 import colorLog from './log';
 import { getBrowser } from './util';
+import type { FSWatcher } from 'chokidar';
 import chokidar from 'chokidar';
 
 /**
  * Sends the actual command to typescript to compile connectors, and places them where they should be.
  *
- * @returns A promise that resolves when the conenctors are compiled
+ * @returns A promise that resolves when the connectors are compiled
  */
 function generateConnectors() {
 	return new Promise<void>((resolve, reject) => {
 		exec(
-			'tsc --project tsconfig.connectors.json',
+			'esbuild src/connectors/*.ts --bundle --outdir=build/connectorraw --tsconfig=tsconfig.connectors.json',
 			(err, stdout, stderr) => {
 				if (err) {
 					colorLog(err, 'error');
 					colorLog(stdout, 'info');
 					colorLog(stderr, 'error');
-					reject();
+					reject(new Error());
 					return;
 				}
 				colorLog('Connector file compilation complete', 'success');
@@ -27,18 +28,17 @@ function generateConnectors() {
 				try {
 					fs.removeSync(`build/${getBrowser()}/connectors`);
 					fs.moveSync(
-						'build/connectorraw/connectors',
-						`build/${getBrowser()}/connectors`
+						'build/connectorraw',
+						`build/${getBrowser()}/connectors`,
 					);
 					fs.removeSync('build/connectorraw');
 					colorLog('Connector files moved', 'success');
 					resolve();
 				} catch (err) {
 					colorLog(err, 'error');
-					reject();
-					return;
+					reject(new Error());
 				}
-			}
+			},
 		);
 	});
 }
@@ -46,7 +46,7 @@ function generateConnectors() {
 /**
  * chokidar watcher used for HMR purposes
  */
-let watcher: chokidar.FSWatcher;
+const watcher: FSWatcher | null = null;
 
 /**
  * Vite plugin that compiles the connector .ts files, and moves them to the correct folder
@@ -58,7 +58,7 @@ export default function compileConnectors(options: {
 }): PluginOption {
 	return {
 		name: 'compile-connectors',
-		async buildStart() {
+		buildStart: async () => {
 			await generateConnectors();
 			if (!options.isDev) {
 				return;
@@ -87,7 +87,7 @@ export default function compileConnectors(options: {
 				colorLog(err, 'error');
 			});
 		},
-		buildEnd(err?: Error) {
+		buildEnd: (err?: Error) => {
 			watcher?.close();
 			if (err) {
 				colorLog(err, 'error');

@@ -9,4 +9,8 @@ export default {
 		},
 	},
 	plugins: [ConditionalCompile()],
+	test: {
+		testTimeout: 10000,
+		setupFiles: ['./tests/setup/handle-rejections.ts'],
+	},
 };

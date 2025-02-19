@@ -1,9 +1,10 @@
-import { ConnectorMeta } from '@/core/connectors';
-import { ControllerModeStr } from '@/core/object/controller/controller';
-import { ServiceCallResult } from '@/core/object/service-call-result';
-import { CloneableSong } from '@/core/object/song';
-import { ScrobblerSongInfo } from '@/core/scrobbler/base-scrobbler';
-import { ManagerTab } from '@/core/storage/wrapper';
+import type { ConnectorMeta } from '@/core/connectors';
+import type { ChannelInfo } from '@/core/content/util';
+import type { ControllerModeStr } from '@/core/object/controller/controller';
+import type { ServiceCallResult } from '@/core/object/service-call-result';
+import type { CloneableSong } from '@/core/object/song';
+import type { ScrobblerSongInfo } from '@/core/scrobbler/base-scrobbler';
+import type { ManagerTab } from '@/core/storage/wrapper';
 import browser from 'webextension-polyfill';
 
 /**
@@ -20,7 +21,10 @@ interface PopupCommunications {
 
 interface ContentCommunications {
 	controllerModeChange: {
-		payload: ControllerModeStr;
+		payload: {
+			mode: ControllerModeStr;
+			permanentMode: ControllerModeStr;
+		};
 		response: void;
 	};
 	songUpdate: {
@@ -59,26 +63,64 @@ interface ContentCommunications {
 		payload: {
 			song: CloneableSong;
 		};
-		response: Promise<ServiceCallResult[]>;
+		response: ServiceCallResult[];
 	};
-	scrobble: {
+	setPaused: {
 		payload: {
 			song: CloneableSong;
 		};
-		response: Promise<ServiceCallResult[]>;
+		response: ServiceCallResult[];
+	};
+	setResumedPlaying: {
+		payload: {
+			song: CloneableSong;
+		};
+		response: ServiceCallResult[];
+	};
+	scrobble: {
+		payload: {
+			songs: CloneableSong[];
+			currentlyPlaying: boolean;
+		};
+		response: ServiceCallResult[][];
 	};
 	getSongInfo: {
 		payload: {
 			song: CloneableSong;
 		};
-		response: Promise<(Record<string, never> | ScrobblerSongInfo | null)[]>;
+		response: (Record<string, never> | ScrobblerSongInfo | null)[];
 	};
 	toggleLove: {
 		payload: {
 			song: CloneableSong;
 			isLoved: boolean;
+			shouldShowNotification: boolean;
 		};
-		response: Promise<(ServiceCallResult | Record<string, never>)[]>;
+		response: (ServiceCallResult | Record<string, never>)[];
+	};
+	sendListenBrainzRequest: {
+		payload: {
+			url: string;
+		};
+		response: string | null;
+	};
+	updateScrobblerProperties: {
+		payload: undefined;
+		response: void;
+	};
+	fetch: {
+		payload: {
+			url: string;
+			init?: RequestInit | undefined;
+		};
+		response: {
+			ok: boolean;
+			content: string;
+		};
+	};
+	isTabAudible: {
+		payload: undefined;
+		response: boolean;
 	};
 }
 
@@ -94,6 +136,7 @@ interface BackgroundCommunications {
 	toggleLove: {
 		payload: {
 			isLoved: boolean;
+			shouldShowNotification: boolean;
 		};
 		response: void;
 	};
@@ -123,12 +166,32 @@ interface BackgroundCommunications {
 		payload: undefined;
 		response: {
 			mode: ControllerModeStr;
+			permanentMode: ControllerModeStr;
 			song: CloneableSong | null;
 		};
 	};
 	disableConnectorUntilTabIsClosed: {
 		payload: undefined;
 		response: void;
+	};
+	forceScrobbleSong: {
+		payload: undefined;
+		response: void;
+	};
+	addToBlocklist: {
+		payload: undefined;
+		response: void;
+	};
+	removeFromBlocklist: {
+		payload: undefined;
+		response: void;
+	};
+	getChannelDetails: {
+		payload: undefined;
+		response: {
+			connector: ConnectorMeta;
+			channelInfo: ChannelInfo | null | undefined;
+		};
 	};
 }
 
@@ -141,7 +204,9 @@ interface SpecificContentListener<K extends keyof BackgroundCommunications> {
 	fn: (
 		payload: BackgroundCommunications[K]['payload'],
 		sender: browser.Runtime.MessageSender,
-	) => BackgroundCommunications[K]['response'];
+	) =>
+		| BackgroundCommunications[K]['response']
+		| Promise<BackgroundCommunications[K]['response']>;
 }
 
 type ContentListener = <R>(
@@ -166,24 +231,29 @@ interface BackgroundMessage<K extends keyof BackgroundCommunications> {
 }
 
 export function setupContentListeners(...listeners: ContentListener[]) {
-	browser.runtime.onMessage.addListener(
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(message: BackgroundMessage<any>, sender) => {
-			let done = false;
-			for (const l of listeners) {
-				const response = l((listener) => {
-					if (message.type !== listener.type) {
-						return;
-					}
-					done = true;
-					return listener.fn(message.payload, sender);
-				});
-				if (done) {
-					return Promise.resolve(response);
+	browser.runtime.onMessage.addListener((message, sender) => {
+		let done = false;
+		for (const l of listeners) {
+			// eslint-disable-next-line
+			const response = l((listener) => {
+				if (
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					(message as BackgroundMessage<any>).type !== listener.type
+				) {
+					return;
 				}
+				done = true;
+				return listener.fn(
+					// eslint-disable-next-line
+					(message as BackgroundMessage<any>).payload,
+					sender,
+				);
+			});
+			if (done) {
+				return Promise.resolve(response);
 			}
-		},
-	);
+		}
+	});
 }
 
 export async function sendBackgroundMessage<
@@ -192,6 +262,7 @@ export async function sendBackgroundMessage<
 	tabId: number,
 	message: BackgroundMessage<K>,
 ): Promise<BackgroundCommunications[K]['response']> {
+	// eslint-disable-next-line
 	return browser.tabs.sendMessage(tabId, message);
 }
 
@@ -204,7 +275,9 @@ interface SpecificBackgroundListener<K extends keyof ContentCommunications> {
 	fn: (
 		payload: ContentCommunications[K]['payload'],
 		sender: browser.Runtime.MessageSender,
-	) => ContentCommunications[K]['response'];
+	) =>
+		| ContentCommunications[K]['response']
+		| Promise<ContentCommunications[K]['response']>;
 }
 
 type BackgroundListener = <R>(
@@ -231,15 +304,23 @@ interface ContentMessage<K extends keyof ContentCommunications> {
 export function setupBackgroundListeners(...listeners: BackgroundListener[]) {
 	browser.runtime.onMessage.addListener(
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		(message: ContentMessage<any>, sender) => {
+		(message, sender) => {
 			let done = false;
 			for (const l of listeners) {
+				// eslint-disable-next-line
 				const response = l((listener) => {
-					if (message.type !== listener.type) {
+					if (
+						// eslint-disable-next-line @typescript-eslint/no-explicit-any
+						(message as ContentMessage<any>).type !== listener.type
+					) {
 						return;
 					}
 					done = true;
-					return listener.fn(message.payload, sender);
+					return listener.fn(
+						// eslint-disable-next-line
+						(message as ContentMessage<any>).payload,
+						sender,
+					);
 				});
 				if (done) {
 					return Promise.resolve(response);
@@ -252,6 +333,7 @@ export function setupBackgroundListeners(...listeners: BackgroundListener[]) {
 export async function sendContentMessage<K extends keyof ContentCommunications>(
 	message: ContentMessage<K>,
 ): Promise<ContentCommunications[K]['response']> {
+	// eslint-disable-next-line
 	return browser.runtime.sendMessage(message);
 }
 
@@ -264,7 +346,9 @@ interface SpecificPopupListener<K extends keyof PopupCommunications> {
 	fn: (
 		payload: PopupCommunications[K]['payload'],
 		sender: browser.Runtime.MessageSender,
-	) => PopupCommunications[K]['response'];
+	) =>
+		| PopupCommunications[K]['response']
+		| Promise<PopupCommunications[K]['response']>;
 }
 
 type PopupListener = <R>(
@@ -291,15 +375,21 @@ interface PopupMessage<K extends keyof PopupCommunications> {
 export function setupPopupListeners(...listeners: PopupListener[]) {
 	browser.runtime.onMessage.addListener(
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Set regardless of previous state
-		(message: PopupMessage<any>, sender) => {
+		(message, sender) => {
 			let done = false;
 			for (const l of listeners) {
+				// eslint-disable-next-line
 				const response = l((listener) => {
-					if (message.type !== listener.type) {
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					if ((message as PopupMessage<any>).type !== listener.type) {
 						return;
 					}
 					done = true;
-					return listener.fn(message.payload, sender);
+					return listener.fn(
+						// eslint-disable-next-line
+						(message as PopupMessage<any>).payload,
+						sender,
+					);
 				});
 				if (done) {
 					return Promise.resolve(response);
@@ -312,5 +402,6 @@ export function setupPopupListeners(...listeners: PopupListener[]) {
 export async function sendPopupMessage<K extends keyof PopupCommunications>(
 	message: PopupMessage<K>,
 ): Promise<PopupCommunications[K]['response']> {
+	// eslint-disable-next-line
 	return browser.runtime.sendMessage(message);
 }

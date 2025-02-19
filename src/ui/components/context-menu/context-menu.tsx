@@ -1,25 +1,22 @@
-import {
+import type {
 	Navigator,
 	NavigatorButton,
 	NavigatorButtonGroup,
 	NavigatorNavigationButton,
+} from '@/ui/options/components/navigator';
+import {
 	itemIsSingular,
 	triggerNavigationButton,
 } from '@/ui/options/components/navigator';
-import {
-	Accessor,
-	For,
-	Setter,
-	Show,
-	createMemo,
-	createSignal,
-	onMount,
-} from 'solid-js';
+import type { Accessor, Setter } from 'solid-js';
+import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import styles from './context-menu.module.scss';
 import { t } from '@/util/i18n';
 
 function closeDialogs(e: MouseEvent) {
-	if (!(e.target instanceof Element)) return;
+	if (!(e.target instanceof Element)) {
+		return;
+	}
 
 	const dialogButton = e.target.closest(`.${styles.contextMenuItem}`);
 	const dialog = dialogButton?.nextElementSibling;
@@ -34,13 +31,15 @@ function closeDialogs(e: MouseEvent) {
 		dialog.close();
 	});
 	const dialogButtons = document.querySelectorAll(
-		`.${styles.activeDialogButton}`
+		`.${styles.activeDialogButton}`,
 	);
 	dialogButtons.forEach((dialogButton) => {
 		dialogButton.classList.remove(styles.activeDialogButton);
 	});
 
-	if (!(dialog instanceof HTMLDialogElement) || currentlyOpen) return;
+	if (!(dialog instanceof HTMLDialogElement) || currentlyOpen) {
+		return;
+	}
 
 	dialog.show();
 	dialogButton?.classList.add(styles.activeDialogButton);
@@ -117,7 +116,7 @@ function ContextMenuItem(props: {
 					if (props.setActiveSetting && 'element' in props.item) {
 						triggerNavigationButton(
 							props.item,
-							props.setActiveSetting
+							props.setActiveSetting,
 						);
 					}
 					if ('action' in props.item) {
@@ -126,7 +125,9 @@ function ContextMenuItem(props: {
 				}}
 			>
 				<props.item.icon />
-				<label>{t(props.item.namei18n)}</label>
+				<label>
+					{t(props.item.namei18n, props.item.i18nSubstitution)}
+				</label>
 			</button>
 			<Show when={!itemIsSingular(props.item)}>
 				<dialog

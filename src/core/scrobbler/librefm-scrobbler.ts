@@ -1,9 +1,8 @@
 'use strict';
 
 import { createQueryString } from '@/util/util-browser';
-import AudioScrobbler, {
-	AudioScrobblerParams,
-} from '@/core/scrobbler/audio-scrobbler/audio-scrobbler';
+import type { AudioScrobblerParams } from '@/core/scrobbler/audio-scrobbler/audio-scrobbler';
+import AudioScrobbler from '@/core/scrobbler/audio-scrobbler/audio-scrobbler';
 
 /**
  * Module for all communication with libre.fm
@@ -56,11 +55,11 @@ export default class LibreFmScrobbler extends AudioScrobbler {
 
 	/** @override */
 	protected sendRequest<
-		T extends Record<string, unknown> = Record<string, unknown>
+		T extends Record<string, unknown> = Record<string, unknown>,
 	>(
 		options: RequestInit,
 		params: AudioScrobblerParams,
-		signed?: boolean
+		signed?: boolean,
 	): Promise<T> {
 		if ('post' === options.method?.toLowerCase()) {
 			options.headers = {

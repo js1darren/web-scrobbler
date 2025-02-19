@@ -4,9 +4,9 @@ const filter = MetadataFilter.createFilter({
 	artist: [removeByPrefix, removeBuySuffix],
 });
 
-Connector.playerSelector = '[class^=playerQueue__PlayerWrapper-]';
+Connector.playerSelector = '[class^=styles__PlayerWrapper-]';
 
-const trackInfoSelector = '[class^=PlayerSliderComponent__PlayerTrackInfo-]';
+const trackInfoSelector = '[class^=styles__PlayerTrackInfo-]';
 
 Connector.getTrackInfo = () => {
 	const artistTrackElement = document.querySelector(trackInfoSelector);
@@ -18,28 +18,24 @@ Connector.getTrackInfo = () => {
 	let podcastBoolean;
 
 	if (artistTrackElement && artistTrackElement.hasChildNodes()) {
-		artistText = Util.getTextFromSelectors(
-			'[class*=PlayerSliderComponent__Artist-]'
-		);
-		trackText = Util.getTextFromSelectors(
-			'[class*=PlayerSliderComponent__Track-]'
-		);
+		artistText = Util.getTextFromSelectors('[class*=styles__Artist-]');
+		trackText = Util.getTextFromSelectors('[class*=styles__Track-]');
 		podcastBoolean = false;
 	} else if (artistTrackElement && !artistTrackElement.hasChildNodes()) {
 		artistText = Util.getTextFromSelectors(
-			'[class^=PlayerControls__ShowOwnerName-]'
+			'[class^=styles__ShowOwnerName]',
 		);
 		trackText = Util.getTextFromSelectors(
-			'[class*=PlayerControls__ShowTitle-]'
+			'[class*=PlayerControlsDetails__ShowTitle]',
 		);
 		trackArtUrl = Util.extractImageUrlFromSelectors(
-			'[class^=PlayerControls__ShowPicture-] > img'
+			'[class*=styles__createShowPicture] > img',
 		)?.replace(/(?<=\/)\d+x\d+(?=\/)/g, '300x300'); // larger image path
 		currentTimeValue = Util.getSecondsFromSelectors(
-			'[class^=PlayerSliderComponent__StartTime-]'
+			'[class^=styles__StartTime-]',
 		);
 		remainingTimeValue = Util.getSecondsFromSelectors(
-			'[class^=PlayerSliderComponent__EndTime-]'
+			'[class^=styles__EndTime-]',
 		);
 		podcastBoolean = true;
 	}
@@ -56,8 +52,8 @@ Connector.getTrackInfo = () => {
 
 Connector.isPlaying = () =>
 	Util.getAttrFromSelectors(
-		'[class^=PlayButton__PlayerControl-]',
-		'aria-label'
+		'[class^=styles__PlayerControl-]',
+		'aria-label',
 	) === 'Pause';
 
 Connector.isStateChangeAllowed = () => {
@@ -66,11 +62,12 @@ Connector.isStateChangeAllowed = () => {
 	 * and we should not update state in such case.
 	 */
 	return Boolean(
-		Connector.getTrackInfo() && Util.isElementVisible(trackInfoSelector)
+		Connector.getTrackInfo() && Util.isElementVisible(trackInfoSelector),
 	);
 };
 
-Connector.isScrobblingAllowed = () => Connector.isStateChangeAllowed();
+Connector.scrobblingDisallowedReason = () =>
+	Connector.isStateChangeAllowed() ? null : 'ElementMissing';
 
 Connector.applyFilter(filter);
 

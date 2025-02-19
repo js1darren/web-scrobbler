@@ -13,7 +13,7 @@ Connector.trackArtSelector = '.Tuner__Audio__TrackDetail__img img';
 Connector.getTrackArt = () => {
 	const trackArtUrl = Util.getAttrFromSelectors(
 		'.Tuner__Audio__TrackDetail__img img',
-		'src'
+		'src',
 	);
 	if (trackArtUrl) {
 		return trackArtUrl.replace('90W_90H', '500W_500H');
@@ -24,6 +24,8 @@ Connector.getTrackArt = () => {
 
 Connector.pauseButtonSelector = '[data-qa="pause_button"]';
 
-Connector.isScrobblingAllowed = () => {
-	return !document.querySelector('.Tuner__Audio__TrackDetail__title--ad');
+Connector.scrobblingDisallowedReason = () => {
+	return document.querySelector('.Tuner__Audio__TrackDetail__title--ad')
+		? 'IsAd'
+		: null;
 };

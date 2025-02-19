@@ -1,30 +1,35 @@
 import { hideObjectValue } from '@/util/util';
-import browser from 'webextension-polyfill';
-import {
+import type browser from 'webextension-polyfill';
+import type {
 	CONNECTORS_OPTIONS,
 	CONNECTORS_OVERRIDE_OPTIONS,
 	CORE,
 	CUSTOM_PATTERNS,
 	DISABLED_TABS,
+	BLOCKED_TAGS,
 	LOCAL_CACHE,
 	NOTIFICATIONS,
 	OPTIONS,
 	REGEX_EDITS,
+	SCROBBLE_CACHE,
 	STATE_MANAGEMENT,
 	StorageNamespace,
+	BLOCKLISTS,
+	NATIVE_SCROBBLER_NOTIFICATION,
 } from '@/core/storage/browser-storage';
-import {
+import type {
 	ConnectorOptions,
 	ConnectorsOverrideOptions,
 	GlobalOptions,
 	SavedEdit,
 } from '@/core/storage/options';
-import { ControllerModeStr } from '@/core/object/controller/controller';
-import { CloneableSong } from '@/core/object/song';
+import type { ControllerModeStr } from '@/core/object/controller/controller';
+import type { CloneableSong } from '@/core/object/song';
 import EventEmitter from '@/util/emitter';
-import connectors from '@/core/connectors';
-import { RegexEdit } from '@/util/regex';
+import type connectors from '@/core/connectors';
+import type { RegexEdit } from '@/util/regex';
 import { debugLog } from '../content/util';
+import { ServiceCallResult } from '../object/service-call-result';
 
 export interface CustomPatterns {
 	[connectorId: string]: string[];
@@ -50,23 +55,104 @@ export type ListenBrainzModel =
 	| ListenBrainzAuthStarted
 	| ListenBrainzAuthFinished;
 
+export type WebhookModel = {
+	arrayProperties?: {
+		applicationName: string;
+		userApiUrl: string;
+	}[];
+};
+
+export type ArrayProperty = {
+	applicationName: string;
+	userApiUrl: string;
+};
+
+export type ArrayProperties = ArrayProperty[];
+
 export interface ScrobblerModels {
 	LastFM?: { token?: string } | { sessionID?: string; sessionName?: string };
 	LibreFM?: { token?: string } | { sessionID?: string; sessionName?: string };
 	ListenBrainz?: ListenBrainzModel;
 	Maloja?: Properties;
+	Webhook?: WebhookModel;
+	Pleroma?: Properties;
 }
 
 export interface ManagerTab {
 	tabId: number;
 	mode: ControllerModeStr;
+	permanentMode: ControllerModeStr;
 	song: CloneableSong | null;
 }
+
+export type BlockedTagType = 'artist' | 'album' | 'track';
+
+export type BlockedTagsArtist = {
+	disabled?: true;
+	albums: Record<string, true>;
+	tracks: Record<string, true>;
+};
+
+export type BlockedTags = Record<string, BlockedTagsArtist>;
+
+export type BlockedTagsReference =
+	| {
+			type: 'artist';
+			artist: string;
+	  }
+	| {
+			type: 'album';
+			artist: string;
+			album: string;
+	  }
+	| {
+			type: 'track';
+			artist: string;
+			track: string;
+	  };
 
 export interface StateManagement {
 	activeTabs: ManagerTab[];
 	browserPreferredTheme: 'light' | 'dark';
 }
+
+export enum ScrobbleStatus {
+	SUCCESSFUL = 'success',
+	IGNORED = 'ignored',
+	ERROR = 'error',
+	DISALLOWED = 'disallowed',
+	INVALID = 'invalid',
+}
+
+export function getScrobbleStatus(
+	resultArr: ServiceCallResult[][],
+	index: number,
+): ScrobbleStatus {
+	// RESULT_IGNORE definitely requires action - prioritize it.
+	for (const res of resultArr) {
+		if (res[index] === ServiceCallResult.RESULT_IGNORE) {
+			return ScrobbleStatus.IGNORED;
+		}
+	}
+	for (const res of resultArr) {
+		if (res[index] !== ServiceCallResult.RESULT_OK) {
+			return ScrobbleStatus.ERROR;
+		}
+	}
+	return ScrobbleStatus.SUCCESSFUL;
+}
+
+export interface CacheScrobbleData {
+	song: CloneableSong;
+	status: ScrobbleStatus;
+}
+
+export interface CacheScrobble extends CacheScrobbleData {
+	id: number;
+}
+export type Blocklists = Record<string, Blocklist>;
+
+export type Blocklist = Record<string, string>;
 
 export interface DataModels extends ScrobblerModels {
 	/* sync options */
@@ -80,6 +166,9 @@ export interface DataModels extends ScrobblerModels {
 	[CORE]: { appVersion: string };
 	[LOCAL_CACHE]: { [key: string]: SavedEdit };
 	[REGEX_EDITS]: RegexEdit[];
+	[SCROBBLE_CACHE]: CacheScrobble[];
+	[BLOCKED_TAGS]: BlockedTags;
+	[BLOCKLISTS]: Blocklists;
 
 	/* state management */
 	[STATE_MANAGEMENT]: StateManagement;
@@ -87,6 +176,9 @@ export interface DataModels extends ScrobblerModels {
 		[key: number]: {
 			[key in (typeof connectors)[number]['id']]: true;
 		};
+	};
+	[NATIVE_SCROBBLER_NOTIFICATION]: {
+		[key in (typeof connectors)[number]['id']]: true;
 	};
 }
 
@@ -104,8 +196,8 @@ const LOCKING_TIMEOUT = 3000;
 export default class StorageWrapper<K extends keyof DataModels> {
 	// V extends DataModels[K], T extends Record<K, V>
 	private storage:
-		| browser.Storage.SyncStorageAreaSync
-		| browser.Storage.LocalStorageArea;
+		| browser.Storage.StorageAreaSync
+		| browser.Storage.StorageArea;
 	private namespace: StorageNamespace;
 	private requests: number[] = [];
 	private autoIncrement = 0;
@@ -123,10 +215,8 @@ export default class StorageWrapper<K extends keyof DataModels> {
 	 * @param namespace - Storage namespace
 	 */
 	constructor(
-		storage:
-			| browser.Storage.SyncStorageAreaSync
-			| browser.Storage.LocalStorageArea,
-		namespace: StorageNamespace
+		storage: browser.Storage.StorageAreaSync | browser.Storage.StorageArea,
+		namespace: StorageNamespace,
 	) {
 		this.storage = storage;
 		this.namespace = namespace;
@@ -175,7 +265,6 @@ export default class StorageWrapper<K extends keyof DataModels> {
 				if (toRun === id) {
 					resolve(true);
 					this.emitter.off('updateLock', unlock);
-					return;
 				}
 			};
 			this.emitter.on('updateLock', unlock);
@@ -240,7 +329,7 @@ export default class StorageWrapper<K extends keyof DataModels> {
 
 		const text = JSON.stringify(data, hideSensitiveDataFn, 2);
 
-		// #v-ifndef VITE_TEST
+		// #v-ifdef !VITE_TEST
 		// dont log in content script
 		if (location?.protocol === 'chrome-extension:') {
 			debugLog(`storage.${this.namespace} = ${text}`, 'info');

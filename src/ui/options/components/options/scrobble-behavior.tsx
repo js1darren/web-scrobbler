@@ -1,4 +1,4 @@
-import { Resource, ResourceActions } from 'solid-js';
+import type { Resource, ResourceActions } from 'solid-js';
 import { RadioButtons } from '../inputs';
 import * as BrowserStorage from '@/core/storage/browser-storage';
 import * as Options from '@/core/storage/options';
@@ -16,10 +16,11 @@ export default function ScrobbleBehavior(props: {
 		unknown
 	>;
 }) {
-	const { options, setOptions } = props;
 	return (
 		<>
-			<h2>{t('optionsScrobbleBehavior')}</h2>
+			<h2 id="header-scrobble-behavior">
+				{t('optionsScrobbleBehavior')}
+			</h2>
 			<RadioButtons
 				buttons={[
 					{
@@ -40,18 +41,22 @@ export default function ScrobbleBehavior(props: {
 				]}
 				name="scrobbleBehavior"
 				value={() => {
-					if (options()?.[Options.FORCE_RECOGNIZE]) {
+					if (props.options()?.[Options.FORCE_RECOGNIZE]) {
 						return Options.FORCE_RECOGNIZE;
 					}
-					if (options()?.[Options.SCROBBLE_EDITED_TRACKS_ONLY]) {
+					if (
+						props.options()?.[Options.SCROBBLE_EDITED_TRACKS_ONLY]
+					) {
 						return Options.SCROBBLE_EDITED_TRACKS_ONLY;
 					}
 					return Options.SCROBBLE_RECOGNIZED_TRACKS;
 				}}
 				onChange={(e) => {
 					const value = e.currentTarget.value;
-					setOptions.mutate((o) => {
-						if (!o) return o;
+					props.setOptions.mutate((o) => {
+						if (!o) {
+							return o;
+						}
 						const newOptions = {
 							...o,
 							[Options.FORCE_RECOGNIZE]:
@@ -65,6 +70,7 @@ export default function ScrobbleBehavior(props: {
 						return newOptions;
 					});
 				}}
+				labelledby="header-scrobble-behavior"
 			/>
 		</>
 	);

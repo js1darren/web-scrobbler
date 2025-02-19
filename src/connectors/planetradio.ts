@@ -1,11 +1,11 @@
 export {};
 
-Connector.playerSelector = '.now-playing-wrapper';
+Connector.playerSelector = '#__next > div > div > div:first-child';
 
-Connector.artistSelector = '.text-right .title';
+Connector.artistSelector = '#playbar-play-button + div p';
 
-Connector.trackSelector = '.text-right .track';
+Connector.trackSelector = '#playbar-play-button + div p:last-child';
 
-Connector.trackArtSelector = '.now-playing-block.right .image';
+Connector.trackArtSelector = '#playbar-play-button + div picture img';
 
-Connector.playButtonSelector = '.play';
+Connector.playButtonSelector = '#playbar-play-button svg[data-icon="play"]';

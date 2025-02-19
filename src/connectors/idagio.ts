@@ -25,9 +25,11 @@ Connector.durationSelector = '.player-PlayerProgress__timeTotal--3aHlj span';
 Connector.isPlaying = () =>
 	Util.getTextFromSelectors(pauseButtonSelector)?.toUpperCase() === 'PAUSE';
 
-Connector.isScrobblingAllowed = () =>
-	Util.getTextFromSelectors('.player-PlayerInfo__recordingInfo--15VMv') !==
-	'Sponsor message';
+Connector.scrobblingDisallowedReason = () =>
+	Util.getTextFromSelectors('.player-PlayerInfo__recordingInfo--15VMv') ===
+	'Sponsor message'
+		? 'IsAd'
+		: null;
 
 function getCurrentTrack() {
 	/*
@@ -60,11 +62,11 @@ function getCurrentTrack() {
 
 function getCurrentSymphony() {
 	const symphonyShort = Util.getTextFromSelectors(symphonySelector)?.split(
-		/ in [A-G]| op. [0-9]| KV [0-9]/
+		/ in [A-G]| op. [0-9]| KV [0-9]/,
 	)[0];
 	const commonName = Util.getTextFromSelectors(commonNameSelector) || '';
 	const director = removeParenthesis(
-		Util.getTextFromSelectors(directorSelector)
+		Util.getTextFromSelectors(directorSelector),
 	);
 	return `${symphonyShort}${commonName} (${director})`;
 }

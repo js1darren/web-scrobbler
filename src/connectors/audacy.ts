@@ -9,7 +9,7 @@ Connector.playerSelector = '#root'; // player not in DOM until initiated by user
 
 Connector.getArtist = () => {
 	const miniArtistStationText = Util.getTextFromSelectors(
-		`${audioPlayer} ${buttonOpenFullscreen} span:nth-of-type(2)`
+		`${audioPlayer} ${buttonOpenFullscreen} span:nth-of-type(2)`,
 	);
 
 	if (miniArtistStationText !== null) {
@@ -19,7 +19,7 @@ Connector.getArtist = () => {
 	if (Util.isElementVisible(fullArtistTrackSelector)) {
 		return (
 			Util.getTextFromSelectors(fullArtistTrackSelector)?.split(
-				' - '
+				' - ',
 			)[1] ?? ''
 		);
 	}
@@ -29,7 +29,7 @@ Connector.getArtist = () => {
 
 Connector.getTrack = () => {
 	const miniTrackText = Util.getTextFromSelectors(
-		`${audioPlayer} ${buttonOpenFullscreen} span:first-of-type`
+		`${audioPlayer} ${buttonOpenFullscreen} span:first-of-type`,
 	);
 
 	if (miniTrackText !== null) {
@@ -38,7 +38,7 @@ Connector.getTrack = () => {
 
 	if (Util.isElementVisible(fullArtistTrackSelector)) {
 		return Util.getTextFromSelectors(fullArtistTrackSelector)?.split(
-			' - '
+			' - ',
 		)[0];
 	}
 
@@ -62,14 +62,18 @@ Connector.isPlaying = () => {
 	return buttonPlaying === 'Pause' || buttonPlaying === 'Stop';
 };
 
-Connector.isScrobblingAllowed = () => {
+Connector.scrobblingDisallowedReason = () => {
 	const artist = Connector.getArtist();
 	const track = Connector.getTrack();
-	return Boolean(
-		artist &&
-			!artist.includes('Audacy') &&
-			track &&
-			!track.startsWith('Advertisement') &&
-			artist !== track
-	);
+
+	if (!artist || !track) {
+		return 'Other';
+	}
+	if (artist.includes('Audacy') || artist === track) {
+		return 'FilteredTag';
+	}
+	if (track.startsWith('Advertisement')) {
+		return 'IsAd';
+	}
+	return null;
 };

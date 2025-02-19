@@ -1,6 +1,6 @@
 import * as ControllerMode from '@/core/object/controller/controller-mode';
 import * as BrowserStorage from '@/core/storage/browser-storage';
-import { ManagerTab } from '@/core/storage/wrapper';
+import type { ManagerTab } from '@/core/storage/wrapper';
 import {
 	backgroundListener,
 	sendBackgroundMessage,
@@ -21,32 +21,52 @@ import {
 	getCurrentTab,
 	getActiveTabDetails,
 	getCurrentTabId,
+	addToBlocklist,
+	removeFromBlocklist,
 } from './util';
-import {
-	ControllerModeStr,
-	isPrioritizedMode,
-} from '@/core/object/controller/controller';
-import { CloneableSong } from '@/core/object/song';
+import type { ControllerModeStr } from '@/core/object/controller/controller';
+import { isPrioritizedMode } from '@/core/object/controller/controller';
+import type { CloneableSong } from '@/core/object/song';
 import {
 	clearNowPlaying,
+	showAuthNotification,
+	showLovedNotification,
 	showNowPlaying,
 	showSongNotRecognized,
 } from '@/util/notifications';
 import ClonedSong from '@/core/object/cloned-song';
 import { openTab } from '@/util/util-browser';
 import { setRegexDefaults } from '@/util/regex';
-import { getSongInfo, scrobble, sendNowPlaying, toggleLove } from './scrobble';
+import { attemptInjectAllTabs } from './inject';
+import {
+	getSongInfo,
+	scrobble,
+	sendNowPlaying,
+	sendPaused,
+	sendResumedPlaying,
+	toggleLove,
+} from './scrobble';
+import scrobbleService from '../object/scrobble-service';
+import { fetchListenBrainzProfile } from '@/util/util';
 
 const disabledTabs = BrowserStorage.getStorage(BrowserStorage.DISABLED_TABS);
 
 // Set up listeners. These must all be synchronously set up at startup time (Manifest V3 service worker)
-browser.runtime.onStartup.addListener(startupFunc);
-browser.runtime.onInstalled.addListener(startupFunc);
-browser.tabs.onRemoved.addListener(onTabRemoved);
-browser.tabs.onUpdated.addListener(onTabUpdated);
-browser.tabs.onActivated.addListener(onTabActivated);
-browser.contextMenus?.onClicked.addListener(contextMenuHandler);
-browser.commands?.onCommand.addListener(commandHandler);
+browser.runtime.onStartup.addListener(onStartup);
+browser.runtime.onInstalled.addListener(onInstalled);
+browser.tabs.onRemoved.addListener((tabId) => void onTabRemoved(tabId));
+browser.tabs.onUpdated.addListener(
+	(tabId, changeInfo, tab) => void onTabUpdated(tabId, changeInfo, tab),
+);
+browser.tabs.onActivated.addListener(
+	(activeInfo) => void onTabActivated(activeInfo),
+);
+browser.contextMenus?.onClicked.addListener(
+	(info) => void contextMenuHandler(info),
+);
+browser.commands?.onCommand.addListener(
+	(command) => void commandHandler(command),
+);
 
 /**
  * Handle user commands (hotkeys) to the extension.
@@ -55,6 +75,7 @@ browser.commands?.onCommand.addListener(commandHandler);
  */
 async function commandHandler(command: string) {
 	const tab = await getCurrentTab();
+	const alreadyLoved = tab.song?.metadata.userloved;
 
 	switch (command) {
 		case 'toggle-connector':
@@ -65,10 +86,18 @@ async function commandHandler(command: string) {
 			}
 			break;
 		case 'love-song':
-			setLoveStatus(tab.tabId, true);
+			// only set love status if song is not yet loved, ignore if song is already loved
+			// only send notification when song is unloved but will be loved
+			if (!alreadyLoved) {
+				setLoveStatus(tab.tabId, true, true);
+			}
 			break;
 		case 'unlove-song':
-			setLoveStatus(tab.tabId, false);
+			// only set unlove status if song is loved, ignore if song is unloved
+			// only send notification when song is loved but will be unloved
+			if (alreadyLoved) {
+				setLoveStatus(tab.tabId, false, true);
+			}
 			break;
 	}
 }
@@ -78,13 +107,19 @@ async function commandHandler(command: string) {
  *
  * @param tabId	- Tab ID of the tab to update
  * @param isLoved - Whether the song is loved
+ * @param shouldShowNotification - Whether the song should show notification when (un)loved
  *
  */
-function setLoveStatus(tabId: number, isLoved: boolean) {
+function setLoveStatus(
+	tabId: number,
+	isLoved: boolean,
+	shouldShowNotification: boolean,
+) {
 	sendBackgroundMessage(tabId ?? -1, {
 		type: 'toggleLove',
 		payload: {
-			isLoved: isLoved,
+			isLoved,
+			shouldShowNotification,
 		},
 	});
 }
@@ -118,7 +153,7 @@ async function onTabRemoved(tabId: number) {
  * @param activeInfo - Information about the switch of tabs
  */
 async function onTabActivated(
-	activeInfo: browser.Tabs.OnActivatedActiveInfoType
+	activeInfo: browser.Tabs.OnActivatedActiveInfoType,
 ) {
 	await updateTabList(activeInfo.tabId, true);
 }
@@ -134,7 +169,7 @@ async function onTabActivated(
 async function onTabUpdated(
 	tabId: number,
 	changeInfo: browser.Tabs.OnUpdatedChangeInfoType,
-	tab?: browser.Tabs.Tab
+	tab?: browser.Tabs.Tab,
 ) {
 	if (tab?.active && changeInfo.status === 'complete') {
 		await updateTabList(tabId, false);
@@ -161,7 +196,7 @@ async function updateTabList(tabId: number, activated: boolean) {
 			newTabs = [curTab, ...newTabs];
 		} else {
 			newTabs = newTabs.map((active) =>
-				active.tabId === tabId ? curTab : active
+				active.tabId === tabId ? curTab : active,
 			);
 		}
 	}
@@ -182,7 +217,7 @@ async function updateTabList(tabId: number, activated: boolean) {
  */
 async function updateTab(
 	tabId: number | undefined,
-	fn: (tab: ManagerTab) => ManagerTab
+	fn: (tab: ManagerTab) => ManagerTab,
 ): Promise<void> {
 	if (!tabId) {
 		throw new Error('No tabid given');
@@ -204,7 +239,10 @@ async function updateTab(
 				activeTabs,
 				browserPreferredTheme: curState.browserPreferredTheme,
 			});
-			updateTabsFromTabList(activeTabs, tabId);
+
+			// this can be different from the tab of the script calling the mode change
+			const activeTabId = await getCurrentTabId();
+			updateTabsFromTabList(activeTabs, activeTabId);
 			return;
 		}
 		performedSet = true;
@@ -212,6 +250,7 @@ async function updateTab(
 			fn({
 				tabId,
 				mode: ControllerMode.Unsupported,
+				permanentMode: ControllerMode.Unsupported,
 				song: null,
 			}),
 			...activeTabs,
@@ -220,7 +259,10 @@ async function updateTab(
 			activeTabs: newTabs,
 			browserPreferredTheme: curState.browserPreferredTheme,
 		});
-		updateTabsFromTabList(activeTabs, tabId);
+
+		// this can be different from the tab of the script calling the mode change
+		const activeTabId = await getCurrentTabId();
+		updateTabsFromTabList(activeTabs, activeTabId);
 	} catch (err) {
 		if (!performedSet) {
 			unlockState();
@@ -234,10 +276,15 @@ async function updateTab(
  * @param tabId - ID of the tab to update mode of
  * @param mode - New controller mode
  */
-async function updateMode(tabId: number | undefined, mode: ControllerModeStr) {
+async function updateMode(
+	tabId: number | undefined,
+	mode: ControllerModeStr,
+	permanentMode: ControllerModeStr,
+) {
 	await updateTab(tabId, (oldTab) => ({
 		tabId: oldTab.tabId,
 		mode,
+		permanentMode,
 		song: oldTab.song,
 	}));
 }
@@ -250,11 +297,12 @@ async function updateMode(tabId: number | undefined, mode: ControllerModeStr) {
  */
 async function updateState(
 	tabId: number | undefined,
-	song: CloneableSong | null
+	song: CloneableSong | null,
 ) {
 	await updateTab(tabId, (oldTab) => ({
 		tabId: oldTab.tabId,
 		mode: oldTab.mode,
+		permanentMode: oldTab.permanentMode,
 		song,
 	}));
 }
@@ -266,8 +314,8 @@ setupBackgroundListeners(
 	 */
 	backgroundListener({
 		type: 'controllerModeChange',
-		fn: (mode, sender) => {
-			updateMode(sender.tab?.id, mode);
+		fn: ({ mode, permanentMode }, sender) => {
+			updateMode(sender.tab?.id, mode, permanentMode);
 			console.log(`changed mode to ${mode} in tab ${sender.tab?.id}`);
 		},
 	}),
@@ -308,7 +356,7 @@ setupBackgroundListeners(
 				payload.connector,
 				() => {
 					openTab(sender.tab?.id ?? -1);
-				}
+				},
 			);
 		},
 	}),
@@ -320,7 +368,33 @@ setupBackgroundListeners(
 		type: 'setNowPlaying',
 		fn: (payload, sender) => {
 			return sendNowPlaying(
-				new ClonedSong(payload.song, sender.tab?.id ?? -1)
+				new ClonedSong(payload.song, sender.tab?.id ?? -1),
+			);
+		},
+	}),
+
+	/**
+	 * Listener called by a controller to trigger sending paused song on every pause.
+	 */
+	backgroundListener({
+		type: 'setPaused',
+		// eslint-disable-next-line @typescript-eslint/no-misused-promises
+		fn: (payload, sender) => {
+			return sendPaused(
+				new ClonedSong(payload.song, sender.tab?.id ?? -1),
+			);
+		},
+	}),
+
+	/**
+	 * Listener called by a controller to trigger sending playing song on every resumed play.
+	 */
+	backgroundListener({
+		type: 'setResumedPlaying',
+		// eslint-disable-next-line @typescript-eslint/no-misused-promises
+		fn: (payload, sender) => {
+			return sendResumedPlaying(
+				new ClonedSong(payload.song, sender.tab?.id ?? -1),
 			);
 		},
 	}),
@@ -331,7 +405,12 @@ setupBackgroundListeners(
 	backgroundListener({
 		type: 'scrobble',
 		fn: (payload, sender) => {
-			return scrobble(new ClonedSong(payload.song, sender.tab?.id ?? -1));
+			return scrobble(
+				payload.songs.map(
+					(song) => new ClonedSong(song, sender.tab?.id ?? -1),
+				),
+				payload.currentlyPlaying,
+			);
 		},
 	}),
 
@@ -342,7 +421,7 @@ setupBackgroundListeners(
 		type: 'getSongInfo',
 		fn: (payload, sender) => {
 			return getSongInfo(
-				new ClonedSong(payload.song, sender.tab?.id ?? -1)
+				new ClonedSong(payload.song, sender.tab?.id ?? -1),
 			);
 		},
 	}),
@@ -353,11 +432,21 @@ setupBackgroundListeners(
 	backgroundListener({
 		type: 'toggleLove',
 		fn: (payload, sender) => {
-			return toggleLove(
-				new ClonedSong(payload.song, sender.tab?.id ?? -1),
-				payload.isLoved
-			);
+			const song = new ClonedSong(payload.song, sender.tab?.id ?? -1);
+			if (payload.shouldShowNotification) {
+				showLovedNotification(song, payload.isLoved);
+			}
+			return toggleLove(song, payload.isLoved);
 		},
+	}),
+
+	/**
+	 * Listener called by a content script to attempt signing into musicbrainz.
+	 * This has to be done in background script, as safari blocks sending necessary cookies in other scripts.
+	 */
+	backgroundListener({
+		type: 'sendListenBrainzRequest',
+		fn: async (payload) => fetchListenBrainzProfile(payload.url),
 	}),
 
 	/**
@@ -381,7 +470,7 @@ setupBackgroundListeners(
 				payload.connector,
 				() => {
 					openTab(sender.tab?.id ?? -1);
-				}
+				},
 			);
 		},
 	}),
@@ -391,6 +480,7 @@ setupBackgroundListeners(
 	 */
 	backgroundListener({
 		type: 'updateTheme',
+		// eslint-disable-next-line @typescript-eslint/no-misused-promises
 		fn: async (payload) => {
 			const curState = await getState();
 			await setState({
@@ -398,19 +488,90 @@ setupBackgroundListeners(
 				browserPreferredTheme: payload,
 			});
 		},
-	})
+	}),
+
+	/**
+	 * Listener called by a content script to fetch through background script.
+	 */
+	backgroundListener({
+		type: 'fetch',
+		fn: async ({ url, init }) => {
+			const res = await fetch(url, init);
+			if (!res.ok) {
+				return {
+					ok: false,
+					content: '',
+				};
+			}
+			return {
+				ok: true,
+				content: await res.text(),
+			};
+		},
+	}),
+
+	/**
+	 * Listener called by a content script to figure out whether it is currently audible
+	 */
+	backgroundListener({
+		type: 'isTabAudible',
+		fn: async (_, sender) => {
+			const tabId = sender.tab?.id;
+			if (typeof tabId !== 'number') {
+				return Promise.resolve(true);
+			}
+
+			return (await browser.tabs.get(tabId)).audible ?? true;
+		},
+	}),
 );
+
+/**
+ * Replace the extension version stored in local storage by current one.
+ */
+async function updateVersionInStorage() {
+	const storage = BrowserStorage.getStorage(BrowserStorage.CORE);
+	let data = await storage.get();
+	if (!data) {
+		data = {
+			appVersion: '',
+		};
+	}
+
+	data.appVersion = browser.runtime.getManifest().version;
+	await storage.set(data);
+
+	storage.debugLog();
+}
+
+/**
+ * Ask a scrobble service to bind scrobblers.
+ *
+ * @returns true if at least one scrobbler is registered;
+ *          false if no scrobblers are registered
+ */
+async function bindScrobblers() {
+	const boundScrobblers = await scrobbleService.bindAllScrobblers();
+	return boundScrobblers.length > 0;
+}
 
 /**
  * Sets up the starting state of the extension on browser startup/extension install.
  * Storage is used instead of variables, as with Manifest V3 service workers, script state cannot be guaranteed.
  */
-function startupFunc() {
+function onStartup() {
 	const state = BrowserStorage.getStorage(BrowserStorage.STATE_MANAGEMENT);
 	state.set(DEFAULT_STATE);
 	disabledTabs.set({});
 
 	setRegexDefaults();
+	updateVersionInStorage();
+	bindScrobblers().then((bound) => {
+		if (!bound) {
+			console.warn('No scrobblers are bound');
+			showAuthNotification();
+		}
+	});
 
 	browser.contextMenus?.create({
 		id: contextMenus.ENABLE_CONNECTOR,
@@ -432,6 +593,29 @@ function startupFunc() {
 		contexts: ['action'],
 		title: 'Error: You should not be seeing this',
 	});
+
+	browser.contextMenus.create({
+		id: contextMenus.ENABLE_CHANNEL,
+		visible: false,
+		contexts: ['action'],
+		title: 'Error: You should not be seeing this',
+	});
+
+	browser.contextMenus.create({
+		id: contextMenus.DISABLE_CHANNEL,
+		visible: false,
+		contexts: ['action'],
+		title: 'Error: You should not be seeing this',
+	});
+}
+
+/**
+ * To be ran on install/update. Does all the things extension does on startup,
+ * and also injects the content script into all eligible tabs as the old ones have been invalidated.
+ */
+function onInstalled() {
+	onStartup();
+	attemptInjectAllTabs();
 }
 
 /**
@@ -453,6 +637,14 @@ async function contextMenuHandler(info: browser.Menus.OnClickData) {
 		}
 		case contextMenus.DISABLE_UNTIL_CLOSED: {
 			disableUntilClosed(tab.tabId);
+			break;
+		}
+		case contextMenus.ENABLE_CHANNEL: {
+			removeFromBlocklist(tab.tabId);
+			break;
+		}
+		case contextMenus.DISABLE_CHANNEL: {
+			addToBlocklist(tab.tabId);
 			break;
 		}
 	}

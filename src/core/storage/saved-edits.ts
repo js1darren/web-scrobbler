@@ -1,7 +1,8 @@
 import * as BrowserStorage from '@/core/storage/browser-storage';
 import SavedEditsModel from '@/core/storage/saved-edits.model';
-import { SavedEdit } from '@/core/storage/options';
-import StorageWrapper, { DataModels } from '@/core/storage/wrapper';
+import type { SavedEdit } from '@/core/storage/options';
+import type { DataModels } from '@/core/storage/wrapper';
+import type StorageWrapper from '@/core/storage/wrapper';
 
 type K = typeof BrowserStorage.LOCAL_CACHE;
 type V = DataModels[K];
@@ -9,7 +10,7 @@ type T = Record<K, V>;
 
 class SavedEditsImpl extends SavedEditsModel {
 	private songInfoStorage = BrowserStorage.getStorage<K>(
-		BrowserStorage.LOCAL_CACHE
+		BrowserStorage.LOCAL_CACHE,
 	);
 
 	public init() {

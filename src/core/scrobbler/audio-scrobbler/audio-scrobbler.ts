@@ -2,10 +2,11 @@ import MD5 from 'blueimp-md5';
 
 import { hideStringInText, timeoutPromise } from '@/util/util';
 import { createQueryString } from '@/util/util-browser';
-import BaseScrobbler, { SessionData } from '@/core/scrobbler/base-scrobbler';
+import type { SessionData } from '@/core/scrobbler/base-scrobbler';
+import BaseScrobbler from '@/core/scrobbler/base-scrobbler';
 import { ServiceCallResult } from '@/core/object/service-call-result';
-import { BaseSong } from '@/core/object/song';
-import {
+import type { BaseSong } from '@/core/object/song';
+import type {
 	AudioScrobblerSessionResponse,
 	AudioScrobblerTrackScrobbleResponse,
 } from '@/core/scrobbler/audio-scrobbler/audio-scrobbler.types';
@@ -29,6 +30,7 @@ interface AudioScrobblerScrobbleParams extends AudioScrobblerParams {
 }
 
 export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
+	public isLocalOnly = false;
 	protected abstract getApiKey(): string;
 	protected abstract getApiSecret(): string;
 	protected abstract getApiUrl(): string;
@@ -57,7 +59,7 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 			const responseData = await this.sendRequest<{ token: string }>(
 				{ method: 'GET' },
 				params,
-				false
+				false,
 			);
 			token = responseData.token;
 		} catch (err) {
@@ -99,11 +101,11 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 
 		const data = await this.storage.get();
 		if (!data) {
-			throw ServiceCallResult.ERROR_AUTH;
+			throw new Error(ServiceCallResult.ERROR_AUTH);
 		}
 		if (!('token' in data)) {
 			if (!('sessionID' in data)) {
-				throw ServiceCallResult.ERROR_AUTH;
+				throw new Error(ServiceCallResult.ERROR_AUTH);
 			}
 			return {
 				sessionID: data.sessionID ?? 'undefined',
@@ -135,7 +137,7 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 				this.debugLog('Failed to trade token for session', 'warn');
 
 				await this.signOut();
-				throw ServiceCallResult.ERROR_AUTH;
+				throw new Error(ServiceCallResult.ERROR_AUTH);
 			}
 		}
 
@@ -183,28 +185,41 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 	}
 
 	/** @override */
-	async scrobble(song: BaseSong): Promise<ServiceCallResult> {
+	async sendPaused(): Promise<ServiceCallResult> {
+		return Promise.resolve(ServiceCallResult.RESULT_OK);
+	}
+
+	/** @override */
+	async sendResumedPlaying(): Promise<ServiceCallResult> {
+		return Promise.resolve(ServiceCallResult.RESULT_OK);
+	}
+
+	/** @override */
+	async scrobble(songs: BaseSong[]): Promise<ServiceCallResult[]> {
 		const { sessionID } = await this.getSession();
 		const params: AudioScrobblerScrobbleParams = {
 			method: 'track.scrobble',
-			'timestamp[0]': song.metadata.startTimestamp.toString(),
-			'track[0]': song.getTrack(),
-			'artist[0]': song.getArtist(),
 			sk: sessionID,
 		};
+		for (const [index, song] of songs.slice(0, 50).entries()) {
+			params[`timestamp[${index}]`] =
+				song.metadata.startTimestamp.toString();
+			params[`track[${index}]`] = song.getTrack();
+			params[`artist[${index}]`] = song.getArtist();
 
-		if (song.getAlbum()) {
-			params['album[0]'] = song.getAlbum();
-		}
+			if (song.getAlbum()) {
+				params[`album[${index}]`] = song.getAlbum();
+			}
 
-		if (song.getAlbumArtist()) {
-			params['albumArtist[0]'] = song.getAlbumArtist();
+			if (song.getAlbumArtist()) {
+				params[`albumArtist[${index}]`] = song.getAlbumArtist();
+			}
 		}
 
 		const response =
 			await this.sendRequest<AudioScrobblerTrackScrobbleResponse>(
 				{ method: 'POST' },
-				params
+				params,
 			);
 		const result = this.processResponse(response);
 
@@ -212,23 +227,50 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 			const scrobbles = response.scrobbles;
 
 			if (scrobbles) {
-				const acceptedCount = scrobbles['@attr'].accepted;
+				const ignoredCount = scrobbles['@attr'].ignored;
 
-				if (acceptedCount === '0') {
-					return ServiceCallResult.RESULT_IGNORE;
+				if (Number(ignoredCount) === 0) {
+					return new Array<ServiceCallResult>(
+						Math.min(songs.length, 50),
+					).fill(ServiceCallResult.RESULT_OK);
+				}
+
+				if (!Array.isArray(scrobbles.scrobble)) {
+					return new Array<ServiceCallResult>(
+						Math.min(songs.length, 50),
+					).fill(ServiceCallResult.RESULT_IGNORE);
+				}
+
+				const timestampMap: Record<string, number> = {};
+				for (const [index, song] of songs.entries()) {
+					timestampMap[song.metadata.startTimestamp.toString()] =
+						index;
+				}
+
+				const results: ServiceCallResult[] =
+					new Array<ServiceCallResult>(Math.min(songs.length, 50));
+				for (const scrobble of scrobbles.scrobble) {
+					results[timestampMap[scrobble.timestamp]] =
+						scrobble.ignoredMessage.code === '0'
+							? ServiceCallResult.RESULT_OK
+							: ServiceCallResult.RESULT_IGNORE;
 				}
 			} else {
-				return ServiceCallResult.ERROR_OTHER;
+				return new Array<ServiceCallResult>(
+					Math.min(songs.length, 50),
+				).fill(ServiceCallResult.ERROR_OTHER);
 			}
 		}
 
-		return result;
+		return new Array<ServiceCallResult>(Math.min(songs.length, 50)).fill(
+			result,
+		);
 	}
 
 	/** @override */
 	async toggleLove(
 		song: BaseSong,
-		isLoved: boolean
+		isLoved: boolean,
 	): Promise<ServiceCallResult> {
 		const { sessionID } = await this.getSession();
 		const params = {
@@ -262,11 +304,11 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 	 */
 
 	protected async sendRequest<
-		T extends Record<string, unknown> = Record<string, unknown>
+		T extends Record<string, unknown> = Record<string, unknown>,
 	>(
 		options: RequestInit,
 		params: AudioScrobblerParams,
-		signed = true
+		signed = true,
 	): Promise<T> {
 		const url = this.makeRequestUrl(params, signed);
 
@@ -279,7 +321,7 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 			response = await timeoutPromise(timeout, promise);
 			responseData = (await response.json()) as T;
 		} catch (e) {
-			throw ServiceCallResult.ERROR_OTHER;
+			throw new Error(ServiceCallResult.ERROR_OTHER);
 		}
 
 		const responseStr = JSON.stringify(responseData, null, 2);
@@ -287,7 +329,7 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 
 		if (!response.ok) {
 			this.debugLog(`${params.method} response:\n${debugMsg}`, 'error');
-			throw ServiceCallResult.ERROR_OTHER;
+			throw new Error(ServiceCallResult.ERROR_OTHER);
 		}
 
 		this.debugLog(`${params.method} response:\n${debugMsg}`);
@@ -307,13 +349,13 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 
 		const response = await this.sendRequest<AudioScrobblerSessionResponse>(
 			{ method: 'GET' },
-			params
+			params,
 		);
 
 		const result = this.processResponse(response);
 
 		if (result !== ServiceCallResult.RESULT_OK) {
-			throw ServiceCallResult.ERROR_AUTH;
+			throw new Error(ServiceCallResult.ERROR_AUTH);
 		}
 
 		const sessionName = response.session.name;
@@ -330,7 +372,7 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 	 */
 	private makeRequestUrl(
 		params: AudioScrobblerParams,
-		signed: boolean
+		signed: boolean,
 	): string {
 		params.api_key = this.getApiKey();
 		params.format = 'json';
@@ -370,7 +412,7 @@ export default abstract class AudioScrobbler extends BaseScrobbler<'LastFM'> {
 	 * @returns Response result
 	 */
 	protected processResponse(
-		responseData: Record<string, unknown>
+		responseData: Record<string, unknown>,
 	): ServiceCallResult {
 		if (responseData.error) {
 			return ServiceCallResult.ERROR_OTHER;

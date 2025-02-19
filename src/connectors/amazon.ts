@@ -39,15 +39,15 @@ function setupPropertiesForNewPlayer() {
 		return { artist, track, trackArt };
 	};
 
-	Connector.isScrobblingAllowed = () => {
+	Connector.scrobblingDisallowedReason = () => {
 		const trackLink = Util.getAttrFromSelectors(
 			trackContainerSelector,
-			'primary-href'
+			'primary-href',
 		);
 
 		// NOTE Regular tracks have no link
 		// Check this condition first if the connector does not work
-		return trackLink === '#';
+		return trackLink === '#' ? null : 'IsAd';
 	};
 
 	Connector.pauseButtonSelector = `${playerBarSelector} music-button[icon-name=pause]`;
@@ -65,7 +65,7 @@ function setupPropertiesForOldPlayer() {
 				'.trackInfoContainer .trackArtist a',
 				'.trackInfoContainer .trackArtist span',
 			],
-			'title'
+			'title',
 		);
 	};
 
@@ -84,7 +84,7 @@ function setupPropertiesForOldPlayer() {
 
 		const albumCellTitle = Util.getAttrFromSelectors(
 			'tr.selectable.currentlyPlaying td.albumCell',
-			'title'
+			'title',
 		);
 		if (albumCellTitle) {
 			return albumCellTitle;
@@ -92,7 +92,7 @@ function setupPropertiesForOldPlayer() {
 
 		const albumImageTitle = Util.getAttrFromSelectors(
 			'.nowPlayingDetail img.albumImage',
-			'title'
+			'title',
 		);
 		if (albumImageTitle) {
 			return albumImageTitle;
@@ -120,7 +120,7 @@ function setupPropertiesForOldPlayer() {
 	Connector.getUniqueID = () => {
 		const optionsHref = Util.getAttrFromSelectors(
 			optionBtnSelector,
-			'href'
+			'href',
 		);
 		return optionsHref && optionsHref.replace(/[\W\w]+adriveId=/, '');
 	};

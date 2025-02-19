@@ -1,16 +1,20 @@
-import {
+import type {
 	ConnectorOptions,
 	ConnectorsOverrideOptions,
 	ConnectorsOverrideOptionValues,
 	GlobalOptions,
 	SavedEdit,
 } from '@/core/storage/options';
-import {
+import type {
 	ListenBrainzModel,
+	WebhookModel,
 	Properties,
 	StateManagement,
+	CacheScrobble,
+	BlockedTags,
+	Blocklists,
 } from '@/core/storage/wrapper';
-import { RegexEdit } from './regex';
+import type { RegexEdit } from './regex';
 
 /**
  * Module that contains some useful helper functions for background scripts.
@@ -24,6 +28,12 @@ export const HIDDEN_PLACEHOLDER = '[hidden]';
  * This value is used only if no duration was parsed or loaded.
  */
 export const DEFAULT_SCROBBLE_TIME = 30;
+
+/**
+ * Percentage of track to playback before the track is scrobbled.
+ * This value is used only if scrobble percent storage is somehow corrupted.
+ */
+export const DEFAULT_SCROBBLE_PERCENT = 50;
 
 /**
  * Minimum number of seconds of scrobbleable track.
@@ -54,6 +64,22 @@ export function debugLog(text: unknown, logType: DebugLogType = 'log'): void {
 }
 
 /**
+ * Narrow the typing of scrobble percent.
+ * Fallback to default if scrobble percent is not a number.
+ *
+ * @param percent - Scrobble percent value from settings
+ * @returns percentage of track to play before scrobbling
+ */
+export function parseScrobblePercent(percent: unknown): number {
+	return percent &&
+		typeof percent === 'number' &&
+		!isNaN(percent) &&
+		isFinite(percent)
+		? percent
+		: DEFAULT_SCROBBLE_PERCENT;
+}
+
+/**
  * Return total number of seconds of playback needed for this track
  * to be scrobbled.
  * @param duration - Song duration
@@ -62,7 +88,7 @@ export function debugLog(text: unknown, logType: DebugLogType = 'log'): void {
  */
 export function getSecondsToScrobble(
 	duration: number | null | undefined,
-	percent: number
+	percent: number,
 ): number {
 	if (isDurationInvalid(duration)) {
 		return DEFAULT_SCROBBLE_TIME;
@@ -112,8 +138,12 @@ export function hideObjectValue(
 		| { token?: string }
 		| Properties
 		| ListenBrainzModel
+		| WebhookModel
 		| StateManagement
 		| RegexEdit[]
+		| CacheScrobble[]
+		| BlockedTags[]
+		| Blocklists,
 ): string {
 	if (!keyValue) {
 		if (keyValue === null) {
@@ -137,7 +167,7 @@ export function hideObjectValue(
  * @returns Check result
  */
 function isDurationInvalid(
-	duration: number | null | undefined
+	duration: number | null | undefined,
 ): duration is null | undefined {
 	return (
 		!duration ||
@@ -155,7 +185,7 @@ function isDurationInvalid(
  */
 export function timeoutPromise<T>(
 	timeout: number,
-	promise: Promise<T>
+	promise: Promise<T>,
 ): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const timeoutId = setTimeout(() => {
@@ -166,10 +196,10 @@ export function timeoutPromise<T>(
 				clearTimeout(timeoutId);
 				resolve(res);
 			},
-			(err) => {
+			(err: Error) => {
 				clearTimeout(timeoutId);
 				reject(err);
-			}
+			},
 		);
 	});
 }
@@ -204,8 +234,11 @@ export function areAllResults<T>(results: T[], result: T): boolean {
  * @param text - The string to capitalize the first letter of
  * @returns The string with the first letter capitalized
  */
-export function capitalizeFirstLetter(text: string): string {
-	return text[0].toUpperCase() + text.slice(1);
+export function kebabCaseToPascalCase(text: string): string {
+	return text
+		.split('-')
+		.map((s) => s[0].toUpperCase() + s.slice(1))
+		.join('');
 }
 
 /**
@@ -228,7 +261,7 @@ export function createArtistURL(artist: string | null | undefined): string {
  */
 export function createAlbumURL(
 	artist: string | null | undefined,
-	album: string | null | undefined
+	album: string | null | undefined,
 ): string {
 	if (!album || !artist) {
 		return '';
@@ -244,7 +277,7 @@ export function createAlbumURL(
  */
 export function createTrackURL(
 	artist: string | null | undefined,
-	track?: string | null | undefined
+	track?: string | null,
 ): string {
 	if (!track || !artist) {
 		return '';
@@ -262,14 +295,65 @@ export function createTrackURL(
 export function createTrackLibraryURL(
 	username: string | null | undefined,
 	artist: string | null | undefined,
-	track: string | null | undefined
+	track: string | null | undefined,
 ): string {
 	if (!track || !artist || !username) {
 		return '';
 	}
 	return `https://www.last.fm/user/${encodeURIComponent(
-		username
+		username,
 	)}/library/music/${encodeURIComponent(artist)}/_/${encodeURIComponent(
-		track
+		track,
 	)}`;
+}
+
+/**
+ * Check if script is currently running in a background script.
+ *
+ * @returns true if running in background script, false if running in any other context including popup.
+ */
+export function isBackgroundScript(): boolean {
+	// on chromium, no window in background script.
+	if (!self.window) {
+		return true;
+	}
+	// on firefox and safari, check for being in the generated background script
+	if (
+		(location.href.startsWith('safari-web-extension') ||
+			location.href.startsWith('moz-extension')) &&
+		location.href.endsWith('generated_background_page.html')
+	) {
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Attempt to fetch listenbrainz profile HTML.
+ *
+ * @param url - URL of listenbrainz instance
+ * @returns html of profile, null if response error
+ */
+export async function fetchListenBrainzProfile(url: string) {
+	const res = await fetch(url, {
+		method: 'GET',
+		// #v-ifdef VITE_FIREFOX
+		credentials: 'same-origin',
+		// #v-endif
+	});
+	if (!res.ok) {
+		return null;
+	}
+	return res.text();
+}
+
+/**
+ * Clamp value between a minimum and a maximum
+ *
+ * @param min - minimum value
+ * @param value - value to clamp
+ * @param max - maximum value
+ */
+export function clamp(min: number, value: number, max: number) {
+	return Math.min(max, Math.max(min, value));
 }

@@ -1,24 +1,32 @@
-import connectors, { ConnectorMeta } from '@/core/connectors';
+import type { ConnectorMeta } from '@/core/connectors';
+import connectors from '@/core/connectors';
 import * as BrowserStorage from '@/core/storage/browser-storage';
 import { debugLog } from '../content/util';
+import { DEFAULT_SCROBBLE_PERCENT } from '@/util/util';
 
 const options = BrowserStorage.getStorage(BrowserStorage.OPTIONS);
 const connectorsOptions = BrowserStorage.getStorage(
-	BrowserStorage.CONNECTORS_OPTIONS
+	BrowserStorage.CONNECTORS_OPTIONS,
 );
 const connectorsOverrideOptions = BrowserStorage.getStorage(
-	BrowserStorage.CONNECTORS_OVERRIDE_OPTIONS
+	BrowserStorage.CONNECTORS_OVERRIDE_OPTIONS,
 );
 
 export const USE_NOTIFICATIONS = 'useNotifications';
 export const USE_UNRECOGNIZED_SONG_NOTIFICATIONS =
 	'useUnrecognizedSongNotifications';
+export const USE_INFOBOX = 'showInfobox';
 export const SCROBBLE_PODCASTS = 'scrobblePodcasts';
+export const AUTO_TOGGLE_LOVE = 'autoToggleLove';
 export const FORCE_RECOGNIZE = 'forceRecognize';
 export const SCROBBLE_RECOGNIZED_TRACKS = 'scrobbleRecognizedTracks';
 export const SCROBBLE_EDITED_TRACKS_ONLY = 'scrobbleEditedTracksOnly';
 export const SCROBBLE_PERCENT = 'scrobblePercent';
 export const DISABLED_CONNECTORS = 'disabledConnectors';
+export const DEBUG_LOGGING_ENABLED = 'debugLoggingEnabled';
+export const ALBUM_GUESSING_DISABLED = 'albumGuessingDisabled';
+export const ALBUM_GUESSING_UNEDITED_ONLY = 'albumGuessingUneditedOnly';
+export const ALBUM_GUESSING_ALL_TRACKS = 'albumGuessingAllTracks';
 
 export interface GlobalOptions {
 	/**
@@ -30,6 +38,11 @@ export interface GlobalOptions {
 	 * Use now playing notifications.
 	 */
 	[USE_NOTIFICATIONS]: boolean;
+
+	/**
+	 * Show the infobox for supported connectors
+	 */
+	[USE_INFOBOX]: boolean;
 
 	/**
 	 * Scrobble percent.
@@ -62,6 +75,31 @@ export interface GlobalOptions {
 	 * Scrobble podcast episodes.
 	 */
 	[SCROBBLE_PODCASTS]: boolean;
+
+	/**
+	 * Allow debug messages to be logged to the browser console.
+	 */
+	[DEBUG_LOGGING_ENABLED]: boolean;
+
+	/**
+	 * Automatically toggle love on scrobbling service when doing so on website.
+	 */
+	[AUTO_TOGGLE_LOVE]: boolean;
+
+	/**
+	 * Disable guessing of albums
+	 */
+	[ALBUM_GUESSING_DISABLED]: boolean;
+
+	/**
+	 * Only guess albums of unedited tracks
+	 */
+	[ALBUM_GUESSING_UNEDITED_ONLY]: boolean;
+
+	/**
+	 * Guess albums for all albumless tracks including edited ones
+	 */
+	[ALBUM_GUESSING_ALL_TRACKS]: boolean;
 }
 
 /**
@@ -74,7 +112,13 @@ const DEFAULT_OPTIONS: GlobalOptions = {
 	[USE_UNRECOGNIZED_SONG_NOTIFICATIONS]: false,
 	[SCROBBLE_RECOGNIZED_TRACKS]: true,
 	[SCROBBLE_EDITED_TRACKS_ONLY]: false,
-	[SCROBBLE_PERCENT]: 50,
+	[DEBUG_LOGGING_ENABLED]: false,
+	[SCROBBLE_PERCENT]: DEFAULT_SCROBBLE_PERCENT,
+	[USE_INFOBOX]: true,
+	[AUTO_TOGGLE_LOVE]: true,
+	[ALBUM_GUESSING_DISABLED]: false,
+	[ALBUM_GUESSING_UNEDITED_ONLY]: true,
+	[ALBUM_GUESSING_ALL_TRACKS]: false,
 	[DISABLED_CONNECTORS]: {},
 };
 
@@ -85,6 +129,8 @@ const OVERRIDE_CONTENT = {
 	[SCROBBLE_PODCASTS]: true,
 	[USE_NOTIFICATIONS]: true,
 	[USE_UNRECOGNIZED_SONG_NOTIFICATIONS]: false,
+	[USE_INFOBOX]: true,
+	[AUTO_TOGGLE_LOVE]: true,
 };
 
 export interface ConnectorOptions {
@@ -111,7 +157,9 @@ const DEFAULT_CONNECTOR_OPTIONS: ConnectorOptions = {
 export interface ConnectorsOverrideOptionValues {
 	[FORCE_RECOGNIZE]?: boolean;
 	[USE_NOTIFICATIONS]?: boolean;
+	[USE_INFOBOX]?: boolean;
 	[SCROBBLE_PODCASTS]?: boolean;
+	[AUTO_TOGGLE_LOVE]?: boolean;
 	[USE_UNRECOGNIZED_SONG_NOTIFICATIONS]?: boolean;
 	[SCROBBLE_RECOGNIZED_TRACKS]?: boolean;
 	[SCROBBLE_EDITED_TRACKS_ONLY]?: boolean;
@@ -180,7 +228,7 @@ async function cleanupConfigValues() {
 
 export async function getOption(
 	key: string,
-	connector?: string
+	connector?: string,
 ): Promise<unknown> {
 	if (!assertValidOptionKey(key)) {
 		return;
@@ -199,7 +247,7 @@ export async function getOption(
 
 export async function setOption<T extends keyof GlobalOptions>(
 	key: T,
-	value: GlobalOptions[T]
+	value: GlobalOptions[T],
 ): Promise<void> {
 	if (!assertValidOptionKey(key)) {
 		return;
@@ -211,7 +259,7 @@ export async function setOption<T extends keyof GlobalOptions>(
 // TODO: the types could be a little stricter on these functions, but it's not too bad
 export async function getConnectorOption(
 	connector: string,
-	key: string
+	key: string,
 ): Promise<boolean | undefined> {
 	if (!assertValidConnector(connector)) {
 		return;
@@ -227,7 +275,7 @@ export async function getConnectorOption(
 export async function setConnectorOption(
 	connector: string,
 	key: string,
-	value: boolean
+	value: boolean,
 ): Promise<void> {
 	if (!assertValidConnector(connector)) {
 		return;
@@ -247,7 +295,7 @@ export async function setConnectorOption(
 
 export async function getConnectorOverrideOption(
 	connector: string,
-	key: keyof GlobalOptions
+	key: keyof GlobalOptions,
 ): Promise<boolean | undefined> {
 	if (!assertValidOverride(key)) {
 		return;
@@ -259,7 +307,7 @@ export async function getConnectorOverrideOption(
 export async function setConnectorOverrideOption(
 	connector: string,
 	key: keyof ConnectorsOverrideOptionValues,
-	value: boolean | undefined
+	value: boolean | undefined,
 ): Promise<void> {
 	const data = await connectorsOverrideOptions.get();
 	if (!data) {
@@ -281,7 +329,7 @@ function assertValidOptionKey(key: string): key is keyof GlobalOptions {
 }
 
 function assertValidOverride(
-	key: string
+	key: string,
 ): key is keyof ConnectorsOverrideOptionValues {
 	if (!(key in OVERRIDE_CONTENT)) {
 		return false;
@@ -290,7 +338,7 @@ function assertValidOverride(
 }
 
 function assertValidConnector(
-	connector: string
+	connector: string,
 ): connector is keyof ConnectorOptions {
 	if (!(connector in DEFAULT_CONNECTOR_OPTIONS)) {
 		throw new Error(`Unknown connector: ${connector}`);
@@ -300,7 +348,7 @@ function assertValidConnector(
 
 function assertValidConnectorOptionKey(
 	connector: keyof ConnectorOptions,
-	key: string
+	key: string,
 ): key is keyof ConnectorOptions[keyof ConnectorOptions] {
 	if (!(key in DEFAULT_CONNECTOR_OPTIONS[connector])) {
 		throw new Error(`Unknown connector option key: ${key}`);
@@ -314,11 +362,11 @@ function assertValidConnectorOptionKey(
  * @returns Check result
  */
 export async function isConnectorEnabled(
-	connector: ConnectorMeta
+	connector: ConnectorMeta,
 ): Promise<boolean> {
 	const data = await options.get();
 	if (!data) {
-		throw 'No options data found';
+		throw new Error('No options data found');
 	}
 	return !data[DISABLED_CONNECTORS][connector.id] === true;
 }
@@ -330,11 +378,11 @@ export async function isConnectorEnabled(
  */
 export async function setConnectorEnabled(
 	connector: ConnectorMeta,
-	state: boolean
+	state: boolean,
 ): Promise<void> {
 	const data = await options.get();
 	if (!data) {
-		throw 'No options data found';
+		throw new Error('No options data found');
 	}
 
 	if (state) {
@@ -353,7 +401,7 @@ export async function setConnectorEnabled(
 export async function setAllConnectorsEnabled(state: boolean): Promise<void> {
 	const data = await options.get();
 	if (!data) {
-		throw 'No options data found';
+		throw new Error('No options data found');
 	}
 
 	data[DISABLED_CONNECTORS] = {};

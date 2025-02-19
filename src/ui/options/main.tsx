@@ -1,21 +1,28 @@
-import { render } from 'solid-js/web';
+import { Dynamic, render } from 'solid-js/web';
 import styles from './settings.module.scss';
 import { initializeThemes } from '@/theme/themes';
 import '@/theme/themes.scss';
-import { Match, Show, Switch, createSignal, onCleanup } from 'solid-js';
-import Close from '@suid/icons-material/CloseOutlined';
+import { Show, createSignal, onCleanup } from 'solid-js';
+import { CloseOutlined } from '@/ui/components/icons';
 import Sidebar from './sidebar/sidebar';
 import { EditsModal } from './components/edit-options/edited-tracks';
 import Permissions from './components/permissions';
 import { RegexEditsModal } from './components/edit-options/regex-edits';
-import {
+import type {
 	ModalType,
 	NavigatorNavigationButton,
+} from './components/navigator';
+import {
 	aboutItem,
+	accountItem,
+	connectorOverrideOptionsItem,
 	settings,
 	showSomeLoveItem,
 } from './components/navigator';
 import ContextMenu from '../components/context-menu/context-menu';
+import { CacheEditModal } from './components/scrobble-cache';
+import { BlockedTagsModal } from './components/edit-options/blocked-tags';
+import { BlocklistModal } from './components/edit-options/blocked-channels';
 
 /**
  * Media query for detecting whether to use context menu or sidebar
@@ -26,11 +33,35 @@ function contextMenuQuery() {
 	return window.matchMedia('(max-width: 700px)').matches;
 }
 
-// Show some love as default except safari, where we don't want it shown because apple
-let defaultSetting = aboutItem;
-// #v-ifndef VITE_SAFARI
-defaultSetting = showSomeLoveItem;
-// #v-endif
+function getDefaultSetting(): NavigatorNavigationButton {
+	// if a page override is selected, return that page
+	const pageTitle = new URLSearchParams(window.location.search).get('p');
+	switch (pageTitle) {
+		case 'accounts':
+			return accountItem;
+		case 'connectors':
+			return connectorOverrideOptionsItem;
+	}
+
+	// in non-safari, go to show some love page
+	// #v-ifdef !VITE_SAFARI
+	return showSomeLoveItem;
+	// #v-endif
+
+	// We actually reach this in safari, return about page
+	return aboutItem;
+}
+
+const defaultSetting = getDefaultSetting();
+
+const modals = {
+	savedEdits: EditsModal,
+	regexEdits: RegexEditsModal,
+	blocklist: BlocklistModal,
+	cacheEdit: CacheEditModal,
+	blockedTags: BlockedTagsModal,
+	'': () => <div>Loading...</div>,
+};
 
 /**
  * Preferences component, with a sidebar and several different options and info pages
@@ -58,9 +89,8 @@ function Options() {
 	document.addEventListener('click', onclick);
 	onCleanup(() => document.removeEventListener('click', onclick));
 
-	const [shouldShowContextMenu, setShouldShowContextMenu] = createSignal(
-		contextMenuQuery()
-	);
+	const [shouldShowContextMenu, setShouldShowContextMenu] =
+		createSignal(contextMenuQuery());
 	const resizeListener = () => setShouldShowContextMenu(contextMenuQuery());
 	window.addEventListener('resize', resizeListener);
 
@@ -95,20 +125,13 @@ function Options() {
 				onClose={() => setActiveModal('')}
 			>
 				<div class={styles.modalContent}>
-					<Switch fallback={<div>Loading...</div>}>
-						<Match when={activeModal() === 'savedEdits'}>
-							<EditsModal />
-						</Match>
-						<Match when={activeModal() === 'regexEdits'}>
-							<RegexEditsModal />
-						</Match>
-					</Switch>
+					<Dynamic component={modals[activeModal()]} />
 				</div>
 				<button
 					class={styles.modalClose}
 					onClick={() => modal?.close()}
 				>
-					<Close />
+					<CloseOutlined />
 				</button>
 			</dialog>
 		</>

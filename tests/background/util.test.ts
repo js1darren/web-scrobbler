@@ -4,7 +4,7 @@
 
 import { expect, describe, it } from 'vitest';
 import * as Util from '@/util/util';
-import { TestData } from '#/types/types';
+import type { TestData } from '#/types/types';
 
 import { ServiceCallResult } from '@/core/object/service-call-result';
 
@@ -215,6 +215,8 @@ function runTests() {
 		const description = func.name;
 
 		describe(description, () => {
+			// TODO: type gymnastics
+			// @ts-ignore type gymnastics required on this one. It works.
 			testFunction(func, data);
 		});
 	}
@@ -226,6 +228,7 @@ function runTests() {
 function testDebugLog() {
 	it('should throw an error if type is invalid', () => {
 		function callInvalidDebugLog() {
+			// @ts-expect-error we are explicitly testing bad format here
 			Util.debugLog('Test', 'invalid_type123');
 		}
 

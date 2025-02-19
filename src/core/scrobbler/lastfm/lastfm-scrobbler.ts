@@ -1,13 +1,12 @@
 'use strict';
 
-import ClonedSong from '@/core/object/cloned-song';
+import type ClonedSong from '@/core/object/cloned-song';
 import { ServiceCallResult } from '@/core/object/service-call-result';
-import { BaseSong } from '@/core/object/song';
-import AudioScrobbler, {
-	AudioScrobblerParams,
-} from '@/core/scrobbler/audio-scrobbler/audio-scrobbler';
-import { ScrobblerSongInfo } from '@/core/scrobbler/base-scrobbler';
-import { LastFmTrackInfo } from '@/core/scrobbler/lastfm/lastfm.types';
+import type { BaseSong } from '@/core/object/song';
+import type { AudioScrobblerParams } from '@/core/scrobbler/audio-scrobbler/audio-scrobbler';
+import AudioScrobbler from '@/core/scrobbler/audio-scrobbler/audio-scrobbler';
+import type { ScrobblerSongInfo } from '@/core/scrobbler/base-scrobbler';
+import type { LastFmTrackInfo } from '@/core/scrobbler/lastfm/lastfm.types';
 import { sendBackgroundMessage } from '@/util/communication';
 
 /**
@@ -81,7 +80,7 @@ export default class LastFmScrobbler extends AudioScrobbler {
 		const responseData = await this.sendRequest<LastFmTrackInfo>(
 			{ method: 'GET' },
 			params,
-			false
+			false,
 		);
 
 		const result = this.processResponse(responseData);
@@ -145,10 +144,13 @@ export default class LastFmScrobbler extends AudioScrobbler {
 				 * Convert an array from response to an object.
 				 * Format is the following: { size: "url", ... }.
 				 */
-				const images = albumInfo.image.reduce((result, image) => {
-					result[image.size] = image['#text'];
-					return result;
-				}, {} as Record<string, string>);
+				const images = albumInfo.image.reduce(
+					(result, image) => {
+						result[image.size] = image['#text'];
+						return result;
+					},
+					{} as Record<string, string>,
+				);
 
 				const imageSizes = ['extralarge', 'large', 'medium'];
 

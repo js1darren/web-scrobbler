@@ -4,6 +4,16 @@ export interface ConnectorMeta {
 	js: string;
 	id: string;
 	allFrames?: true;
+
+	/**
+	 * true if connector uses blocklist. Connector must implement {@link Connector.getChannelId}
+	 */
+	usesBlocklist?: true;
+
+	/**
+	 * true if website has its own scrobbling system the user needs to be aware of.
+	 */
+	hasNativeScrobbler?: true;
 }
 
 export default <ConnectorMeta[]>[
@@ -12,6 +22,7 @@ export default <ConnectorMeta[]>[
 		matches: ['*://www.youtube.com/*', '*://m.youtube.com/*'],
 		js: 'youtube.js',
 		id: 'youtube',
+		usesBlocklist: true,
 	},
 	{
 		label: 'MySpace',
@@ -40,6 +51,12 @@ export default <ConnectorMeta[]>[
 		allFrames: true,
 	},
 	{
+		label: 'Buy Music Club',
+		matches: ['*://www.buymusic.club/*'],
+		js: 'buymusicclub.js',
+		id: 'buymusicclub',
+	},
+	{
 		label: 'Pandora',
 		matches: ['*://www.pandora.com/*'],
 		js: 'pandora.js',
@@ -59,7 +76,7 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: 'SoundCloud',
-		matches: ['*://soundcloud.com/*'],
+		matches: ['*://soundcloud.com/*', '*://m.soundcloud.com/*'],
 		js: 'soundcloud.js',
 		id: 'soundcloud',
 	},
@@ -113,6 +130,7 @@ export default <ConnectorMeta[]>[
 		matches: ['*://open.spotify.com/*'],
 		js: 'spotify.js',
 		id: 'spotify',
+		hasNativeScrobbler: true,
 	},
 	{
 		label: 'plug.dj',
@@ -139,6 +157,17 @@ export default <ConnectorMeta[]>[
 		id: '8tracks',
 	},
 	{
+		label: 'Radio Cidade',
+		matches: [
+			'*://radiocidade.fm/player/*',
+			'*://play.radiomania.com.br/*',
+			'*://*.melodia.com.br/*',
+			'*://jb.fm/player/*',
+		],
+		js: 'radiocidade.js',
+		id: 'radiocidade',
+	},
+	{
 		label: 'Radio Nova',
 		matches: ['*://www.nova.fr/*'],
 		js: 'nova.js',
@@ -149,6 +178,12 @@ export default <ConnectorMeta[]>[
 		matches: ['*://www.radioplus.be/*', '*://radioplus.be/*'],
 		js: 'radioplus.js',
 		id: 'radioplus',
+	},
+	{
+		label: 'Радио Premium',
+		matches: ['*://rpfm.ru/*'],
+		js: 'rpfm.js',
+		id: 'rpfm',
 	},
 	{
 		label: 'Douban.FM',
@@ -193,6 +228,7 @@ export default <ConnectorMeta[]>[
 			'*://music.yandex.by/*',
 			'*://music.yandex.kz/*',
 			'*://music.yandex.ua/*',
+			'*://music.yandex.com/*',
 		],
 		js: 'yandex-music.js',
 		id: 'yandex-music',
@@ -245,8 +281,14 @@ export default <ConnectorMeta[]>[
 		id: 'odnoklassniki',
 	},
 	{
+		label: 'Overcast',
+		matches: ['*://overcast.fm/*'],
+		js: 'overcast.js',
+		id: 'overcast',
+	},
+	{
 		label: 'Online Radio Box',
-		matches: ['*://onlineradiobox.com/*'],
+		matches: ['*://onlineradiobox.com/*', '*://p.onlineradiobox.com/*'],
 		js: 'onlineradiobox.js',
 		id: 'onlineradiobox',
 	},
@@ -291,6 +333,15 @@ export default <ConnectorMeta[]>[
 		matches: ['*://www.radionomy.com/*'],
 		js: 'radionomy.js',
 		id: 'radionomy',
+	},
+	{
+		label: 'J1 Radio',
+		matches: [
+			'*://www.j1fm.tokyo/player/*',
+			'*://www.j1fm.tokyo/michi/player/*',
+		],
+		js: 'aiircom.js',
+		id: 'j1-radio',
 	},
 	{
 		label: 'JazzAndRain',
@@ -371,6 +422,12 @@ export default <ConnectorMeta[]>[
 		id: 'audacy',
 	},
 	{
+		label: 'Audius',
+		matches: ['*://audius.co/*'],
+		js: 'audius.js',
+		id: 'audius',
+	},
+	{
 		label: 'GetWorkDoneMusic',
 		matches: ['*://*.getworkdonemusic.com/*'],
 		js: 'getworkdonemusic.js',
@@ -431,7 +488,7 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: 'SomaFM',
-		matches: ['*://somafm.com/player/*'],
+		matches: ['*://somafm.com/player/*', '*://somafm.com/player24/*'],
 		js: 'somafm.js',
 		id: 'somafm',
 	},
@@ -476,6 +533,12 @@ export default <ConnectorMeta[]>[
 		matches: ['*://www.beatport.com/*'],
 		js: 'beatport.js',
 		id: 'beatport',
+	},
+	{
+		label: 'Beeline Music',
+		matches: ['*://music.beeline.ru/*'],
+		js: 'beeline-music.js',
+		id: 'beeline-music',
 	},
 	{
 		label: 'wavo',
@@ -665,6 +728,12 @@ export default <ConnectorMeta[]>[
 		id: 'qcbeats',
 	},
 	{
+		label: 'Q-Dance',
+		matches: ['*://www.q-dance.com/*'],
+		js: 'q-dance.js',
+		id: 'q-dance',
+	},
+	{
 		label: 'Sawdust City Sounds',
 		matches: ['*://sawdustcitysounds.org/*'],
 		js: 'musicat.js',
@@ -752,8 +821,11 @@ export default <ConnectorMeta[]>[
 		id: 'listenlive',
 	},
 	{
-		label: 'Planet Radio',
-		matches: ['*://planetradio.co.uk/*/player/*'],
+		label: 'Rayo',
+		matches: [
+			'*://hellorayo.co.uk/*/play/*',
+			'*://hellorayo.co.uk/*/player/*',
+		],
 		js: 'planetradio.js',
 		id: 'planetradio',
 	},
@@ -807,6 +879,12 @@ export default <ConnectorMeta[]>[
 		id: 'deltaradio.de',
 	},
 	{
+		label: 'Radio Bob',
+		matches: ['*://*.radiobob.de/*'],
+		js: 'radiobob.js',
+		id: 'radiobob',
+	},
+	{
 		label: 'ByteFM',
 		matches: ['*://www.byte.fm/*'],
 		js: 'byte.fm.js',
@@ -820,7 +898,7 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: 'QQ Music',
-		matches: ['*://y.qq.com/portal/*'],
+		matches: ['*://y.qq.com/*'],
 		js: 'qq-music.js',
 		id: 'qq-music',
 	},
@@ -996,7 +1074,11 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: 'SiriusXM',
-		matches: ['*://player.siriusxm.com/*', '*://player.siriusxm.ca/*'],
+		matches: [
+			'*://www.siriusxm.com/*',
+			'*://www.siriusxm.ca/*',
+			'*://*.siriusxm.com/player/*',
+		],
 		js: 'siriusxm-player.js',
 		id: 'siriusxm-player',
 	},
@@ -1105,12 +1187,6 @@ export default <ConnectorMeta[]>[
 		id: 'warp-aphextwin',
 	},
 	{
-		label: 'Resident Advisor',
-		matches: ['*://www.residentadvisor.net/*'],
-		js: 'residentadvisor.js',
-		id: 'residentadvisor',
-	},
-	{
 		label: 'Zachary Seguin Music',
 		matches: ['*://music.zacharyseguin.ca/*'],
 		js: 'musickit.js',
@@ -1165,6 +1241,12 @@ export default <ConnectorMeta[]>[
 		id: 'pretzel',
 	},
 	{
+		label: 'Primordial Radio',
+		matches: ['*://primordialradio.com/*'],
+		js: 'primordialradio.js',
+		id: 'primordialradio',
+	},
+	{
 		label: 'Radio Kyivstar',
 		matches: ['*://radio.kyivstar.ua/*'],
 		js: 'kyivstar.js',
@@ -1177,7 +1259,7 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: '9128.live',
-		matches: ['*://9128.live/*'],
+		matches: ['*://9128.live/*', '*://embed.radio.co/player/*'],
 		js: 'radioco.js',
 		id: '9128.live',
 		allFrames: true,
@@ -1239,7 +1321,7 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: 'RadioJavan',
-		matches: ['*://www.radiojavan.com/*'],
+		matches: ['*://play.radiojavan.com/*'],
 		js: 'radiojavan.js',
 		id: 'radiojavan',
 	},
@@ -1576,7 +1658,7 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: 'Brain.fm',
-		matches: ['*://www.brain.fm/*'],
+		matches: ['*://my.brain.fm/*'],
 		js: 'brainfm.js',
 		id: 'brainfm',
 	},
@@ -1620,6 +1702,7 @@ export default <ConnectorMeta[]>[
 		label: 'Synology',
 		matches: [
 			'*://*5000/*',
+			'*://*5001/*',
 			'*://*/?launchApp=SYNO.SDS.AudioStation.Application*',
 		],
 		js: 'synology.js',
@@ -1638,9 +1721,9 @@ export default <ConnectorMeta[]>[
 		id: 'coderadio',
 	},
 	{
-		label: 'Dash Radio',
-		matches: ['*://dashradio.com/*'],
-		js: 'dashradio.js',
+		label: 'LITT Live',
+		matches: ['*://littlive.com/*'],
+		js: 'littlive.js',
 		id: 'dashradio',
 	},
 	{
@@ -1650,10 +1733,10 @@ export default <ConnectorMeta[]>[
 		id: 'nicovideo',
 	},
 	{
-		label: 'СберЗвук',
-		matches: ['*://sber-zvuk.com/*'],
-		js: 'sber-zvuk.js',
-		id: 'sber-zvuk',
+		label: 'Звук',
+		matches: ['*://zvuk.com/*'],
+		js: 'zvuk.js',
+		id: 'zvuk',
 	},
 	{
 		label: 'Navidrome',
@@ -1661,10 +1744,15 @@ export default <ConnectorMeta[]>[
 		id: 'navidrome',
 	},
 	{
-		label: 'turntable.fm',
-		matches: ['*://turntable.fm/*'],
-		js: 'turntable.fm.js',
-		id: 'turntable.fm',
+		label: 'deep-cut.fm',
+		matches: [
+			'*://deepcut.fm/*',
+			'*://turntable.fm/*',
+			'*://deep-cut.fm/*',
+			'*://deepcuts.fm/*',
+		],
+		js: 'deep-cut.fm.js',
+		id: 'deepcut.fm',
 	},
 	{
 		label: 'Burntable',
@@ -1926,7 +2014,7 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: 'Beatbump',
-		matches: ['*://beatbump.ml/*'],
+		matches: ['*://beatbump.io/*'],
 		js: 'beatbump.js',
 		id: 'beatbump',
 	},
@@ -2108,8 +2196,396 @@ export default <ConnectorMeta[]>[
 	},
 	{
 		label: 'TrackerHub',
-		matches: ['*://trackerhub.vercel.app/*'],
+		matches: ['*://trackerhub.vercel.app/*', '*://trackerhub.cx/*'],
 		js: 'trackerhub.js',
 		id: 'trackerhub',
+	},
+	{
+		label: 'Gensokyo Radio',
+		matches: ['*://gensokyoradio.net/*'],
+		js: 'gensokyoradio.js',
+		id: 'gensokyoradio',
+	},
+	{
+		label: 'Stationhead',
+		matches: ['*://*stationhead.com/*'],
+		js: 'stationhead.js',
+		id: 'stationhead',
+	},
+	{
+		label: 'TECHNOBASE.FM',
+		matches: [
+			'*://*technobase.fm/*',
+			'*://*housetime.fm/*',
+			'*://*hardbase.fm/*',
+			'*://*trancebase.fm/*',
+			'*://*coretime.fm/*',
+			'*://*clubtime.fm/*',
+			'*://*teatime.fm/*',
+			'*://*replay.fm/*',
+		],
+		js: 'technobase.fm.js',
+		id: 'technobase.fm',
+	},
+	{
+		label: 'Telegram A',
+		matches: ['*://web.telegram.org/a/*'],
+		js: 'telegram-a.js',
+		id: 'telegram-a',
+	},
+	{
+		label: 'Telegram K',
+		matches: ['*://web.telegram.org/k/*'],
+		js: 'telegram-k.js',
+		id: 'telegram-k',
+	},
+	{
+		label: 'TuneGenieEmbed',
+		matches: ['*://b3.tunegenie.com/*'],
+		js: 'tunegenie-embed.js',
+		id: 'tunegenie-embed',
+		allFrames: true,
+	},
+	{
+		label: 'TuneGenie',
+		matches: ['*://*.tunegenie.com/*'],
+		js: 'tunegenie.js',
+		id: 'tunegenie',
+	},
+	{
+		label: 'RTL+ Musik',
+		matches: ['*://plus.rtl.de/*'],
+		js: 'rtl-plus-musik.js',
+		id: 'rtl-plus-musik',
+	},
+	{
+		label: 'Tomorrowland',
+		matches: ['*://www.tomorrowland.com/*'],
+		js: 'tomorrowland.js',
+		id: 'tomorrowland',
+	},
+	{
+		label: 'hearthis.at',
+		matches: ['*://hearthis.at/*'],
+		js: 'hearthis-at.js',
+		id: 'hearthis-at',
+	},
+	{
+		label: 'Blend',
+		matches: ['*://blend.io/*'],
+		js: 'blend.js',
+		id: 'blend',
+	},
+	{
+		label: 'Radio Italia',
+		matches: ['*://www.radioitalia.it/*'],
+		js: 'radio-italia.js',
+		id: 'radio-italia',
+	},
+	{
+		label: 'Lyden av Norge',
+		matches: ['*://www.lydenavnorge.no/*'],
+		js: 'lyden-av-norge.js',
+		id: 'lyden-av-norge',
+	},
+	{
+		label: 'audio.com',
+		matches: ['*://audio.com/*'],
+		js: 'audio.js',
+		id: 'audio-com',
+	},
+	{
+		label: 'AfroCharts',
+		matches: ['*://*.afrocharts.com/*'],
+		js: 'afrocharts.js',
+		id: 'afrocharts',
+	},
+	{
+		label: 'Ed Banger Records',
+		matches: ['*://*.edbangerrecords.com/*'],
+		js: 'ed-banger-records.js',
+		id: 'ed-banger-records',
+	},
+	{
+		label: 'Hyperpipe',
+		matches: ['*://hyperpipe.surge.sh/*'],
+		js: 'hyperpipe.js',
+		id: 'hyperpipe',
+	},
+	{
+		label: 'Radiofreccia',
+		matches: ['*://play.rtl.it/live/*'],
+		js: 'radiofreccia.js',
+		id: 'radiofreccia',
+	},
+	{
+		label: 'khinsider',
+		matches: ['*://downloads.khinsider.com/*'],
+		js: 'khinsider.js',
+		id: 'khinsider',
+	},
+	{
+		label: 'WDR',
+		matches: ['*://*.wdr.de/radio/*'],
+		js: 'wdr.js',
+		id: 'wdr',
+	},
+	{
+		label: 'radio.de',
+		matches: ['*://www.radio.de/*'],
+		js: 'radio.de.js',
+		id: 'radiode',
+	},
+	{
+		label: 'FMSpins',
+		matches: ['*://*.fmspins.com/*'],
+		js: 'fmspins.js',
+		id: 'fmspins',
+	},
+	{
+		label: 'vk-save',
+		matches: ['*://*.vk-save.com/*'],
+		js: 'vk-save.js',
+		id: 'vk-save',
+	},
+	{
+		label: 'Radio Student',
+		matches: ['*://www.radiostudent.hr/*'],
+		js: 'radiostudent.js',
+		id: 'radiostudent',
+	},
+	{
+		label: 'BiliBili',
+		matches: ['*://www.bilibili.com/*'],
+		js: 'bilibili.js',
+		id: 'bilibili',
+		usesBlocklist: true,
+	},
+	{
+		label: 'jam.coop',
+		matches: ['*://jam.coop/*'],
+		js: 'jam.coop.js',
+		id: 'jam.coop',
+	},
+	{
+		label: 'Zing MP3',
+		matches: ['*://zingmp3.vn/*'],
+		js: 'zingmp3.js',
+		id: 'zingmp3',
+	},
+	{
+		label: 'NTS',
+		matches: ['*://*nts.live/*'],
+		js: 'nts.js',
+		id: 'nts',
+	},
+	{
+		label: 'earth.fm',
+		matches: ['*://earth.fm/*'],
+		js: 'earth.fm.js',
+		id: 'earthfm',
+	},
+	{
+		label: "apt-get's auditorium",
+		matches: ['*://tunes.apt-get.xyz/*'],
+		js: 'apt-get-tunes.js',
+		id: 'apt-get-tunes',
+	},
+	{
+		label: 'AzuraCast',
+		js: 'azuracast.js',
+		id: 'azuracast',
+	},
+	{
+		label: 'scrobblerad.io',
+		matches: ['*://scrobblerad.io/*'],
+		js: 'scrobbleradio.js',
+		id: 'scrobbleradio',
+	},
+	{
+		label: 'weareone.fm',
+		matches: ['*://weareone.fm/*'],
+		js: 'weareone.js',
+		id: 'weareone',
+	},
+	{
+		label: 'Bollerwagen',
+		matches: ['*://radiobollerwagen.de/*'],
+		js: 'bollerwagen.js',
+		id: 'bollerwagen',
+	},
+	{
+		label: 'МТС Музыка',
+		matches: ['*://music.mts.ru/*'],
+		js: 'mts-music.js',
+		id: 'mts-music',
+	},
+	{
+		label: 'ChirpRadio',
+		matches: ['*://chirpradio.org/*'],
+		js: 'chirpradio.js',
+		id: 'chirpradio',
+	},
+	{
+		label: 'OnlyHit',
+		matches: ['*://onlyhit.us/*'],
+		js: 'onlyhit.js',
+		id: 'onlyhit',
+	},
+	{
+		label: 'InstantAudio',
+		matches: [
+			'*://instant.audio/*',
+			// North America
+			'*://radiosdecuba.com/*',
+			'*://radio.ht/*',
+			'*://jamaicaradio.net/*',
+			'*://emisoras.com.mx/*',
+			'*://radiosdepuertorico.com/*',
+			'*://radios.com.do/*',
+			'*://trinidadradiostations.net/*',
+			// Central America
+			'*://radios.co.cr/*',
+			'*://radios.com.sv/*',
+			'*://emisoras.com.gt/*',
+			'*://radios.hn/*',
+			'*://radios.co.ni/*',
+			'*://radios.com.pa/*',
+			// South America
+			'*://radioarg.com/*',
+			'*://radios.com.bo/*',
+			'*://radiosaovivo.net/*',
+			'*://emisora.cl/*',
+			'*://radios.com.co/*',
+			'*://radios.com.ec/*',
+			'*://emisoras.com.py/*',
+			'*://radios.com.pe/*',
+			'*://surinaamseradio.com/*',
+			'*://radios.com.uy/*',
+			'*://radio.co.ve/*',
+			// Europe
+			'*://radiosonline.be/*',
+			'*://ceskaradiaonline.cz/*',
+			'*://radio.co.dk/*',
+			'*://radiolisten.de/*',
+			'*://raadiod.com/*',
+			'*://emisora.org.es/*',
+			'*://ecouterradioenligne.com/*',
+			'*://radiofona.com.gr/*',
+			'*://radios.hr/*',
+			'*://ieradio.org/*',
+			'*://ascoltareradio.com/*',
+			'*://latvijasradio.com/*',
+			'*://radios.lu/*',
+			'*://radijas.org/*',
+			'*://radiohallgatas.hu/*',
+			'*://nederlandseradio.nl/*',
+			'*://nettradionorge.com/*',
+			'*://radios.co.at/*',
+			'*://onlineradio.pl/*',
+			'*://radioonline.com.pt/*',
+			'*://radio.org.ro/*',
+			'*://radiosonline.ch/*',
+			'*://siradio.si/*',
+			'*://radiostanice.rs/*',
+			'*://nettiradiot.org/*',
+			'*://radio.org.se/*',
+			'*://internetradiouk.com/*',
+			'*://bg-radio.org/*',
+			'*://radio.pp.ru/*',
+			'*://radioua.net/*',
+			// Africa
+			'*://radioalgerie.eu/*',
+			'*://radio.co.cm/*',
+			'*://radio.cd/*',
+			'*://radio.co.ci/*',
+			'*://radio.com.gh/*',
+			'*://radio.or.ke/*',
+			'*://radio.mg/*',
+			'*://radio.co.ma/*',
+			'*://egyptradio.net/*',
+			'*://radio.org.ng/*',
+			'*://radio.sn/*',
+			'*://radiosa.org/*',
+			'*://radiotunisienne.org/*',
+			'*://radio.co.ug/*',
+			// Asia
+			'*://radio-bd.com/*',
+			'*://radioonline.kr/*',
+			'*://radios.hk/*',
+			'*://onlineradios.in/*',
+			'*://radioonline.co.id/*',
+			'*://radioonline.my/*',
+			'*://radionp.com/*',
+			'*://jpradio.jp/*',
+			'*://radio.net.pk/*',
+			'*://radio.org.ph/*',
+			'*://radiosingapore.org/*',
+			'*://radio.com.lk/*',
+			'*://vietnamradio.org/*',
+			'*://radios.org.il/*',
+			'*://radioth.net/*',
+			'*://zhibo.fm/*',
+			'*://radios.tw/*',
+			// Oceania
+			'*://radioau.net/*',
+			'*://radio.org.nz/*',
+		],
+		js: 'instantaudio.js',
+		id: 'instantaudio',
+	},
+	{
+		label: 'Basspistol Radio',
+		matches: ['*://*.basspistol.com/*'],
+		js: 'basspistol.js',
+		id: 'basspistol',
+	},
+	{
+		label: 'RadioFreeFedi',
+		matches: ['*://radiofreefedi.net/*'],
+		js: 'radiofreefedi.js',
+		id: 'radiofreefedi',
+	},
+	{
+		label: 'MyTuner',
+		matches: ['*://mytuner-radio.com/*'],
+		js: 'mytuner.js',
+		id: 'mytuner',
+	},
+	{
+		label: 'Mirlo',
+		matches: ['*://mirlo.space/*'],
+		js: 'mirlo.js',
+		id: 'mirlo',
+	},
+	{
+		label: 'Simulator Radio',
+		matches: ['*://*.simulatorradio.com/*'],
+		js: 'simulatorradio.js',
+		id: 'simulatorradio',
+	},
+	{
+		label: 'Echo',
+		matches: ['*://echo.sleepyfran.me/*'],
+		js: 'echo.js',
+		id: 'echo',
+	},
+	{
+		label: 'Gizz Tapes',
+		matches: ['*://tapes.kglw.net/*'],
+		js: 'tapes-kglw.js',
+		id: 'tapes-kglw',
+	},
+	{
+		label: 'Systrum Sistum Radio',
+		matches: ['*://systrum.net/*'],
+		js: 'systrum.js',
+		id: 'systrum',
+	},
+	{
+		label: 'cosine.club',
+		matches: ['*://cosine.club/*'],
+		js: 'cosine.club.js',
+		id: 'cosine.club',
 	},
 ];

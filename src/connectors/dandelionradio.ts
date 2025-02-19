@@ -4,7 +4,7 @@ Connector.playerSelector = 'body';
 
 Connector.getTrackInfo = () => {
 	const artistTrackElement = document.querySelector(
-		'#nowplaying > table table tbody > tr:nth-of-type(3) font'
+		'#nowplaying > table table tbody > tr:nth-of-type(3) font',
 	);
 
 	if (artistTrackElement && artistTrackElement.childNodes.length > 2) {
@@ -22,4 +22,5 @@ Connector.trackArtSelector = '#bio .img-left-text img';
 Connector.isPlaying = () =>
 	Util.hasElementClass('#jp_container_1', 'jp-state-playing');
 
-Connector.isScrobblingAllowed = () => Boolean(Connector.getTrackInfo());
+Connector.scrobblingDisallowedReason = () =>
+	Connector.getTrackInfo() ? null : 'Other';

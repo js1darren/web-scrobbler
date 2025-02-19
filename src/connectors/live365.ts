@@ -14,13 +14,13 @@ Connector.getArtistTrack = () => {
 	// "Art for Layla by Derek & The Dominos"
 	const artistAndTrackUnparsed = Util.getAttrFromSelectors(
 		Connector.trackArtSelector,
-		'alt'
+		'alt',
 	);
 
 	const artistAndTrackParsed = Util.splitArtistTrack(
 		artistAndTrackUnparsed,
 		[artistAlbumSeparator],
-		true
+		true,
 	);
 
 	return artistAndTrackParsed;
@@ -37,15 +37,19 @@ const LIVE_365_ARTIST = 'Live365';
 const ADWTAG = 'Advert:';
 const ADBREAK = 'Ad Break';
 
-Connector.isScrobblingAllowed = () => {
+Connector.scrobblingDisallowedReason = () => {
 	const artist = Connector.getArtistTrack()?.artist;
-	return (
-		artist !== null &&
-		artist !== LIVE_365_ARTIST &&
-		artist !== 'undefined' &&
-		!artist?.includes(ADWTAG) &&
-		!artist?.includes(ADBREAK)
-	);
+	if (
+		artist === null ||
+		artist === LIVE_365_ARTIST ||
+		artist === 'undefined'
+	) {
+		return 'FilteredTag';
+	}
+	if (artist?.includes(ADWTAG) || artist?.includes(ADBREAK)) {
+		return 'IsAd';
+	}
+	return null;
 };
 
 /*

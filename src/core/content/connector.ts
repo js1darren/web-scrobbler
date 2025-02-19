@@ -1,8 +1,10 @@
 import * as MetadataFilter from '@web-scrobbler/metadata-filter';
 import browser from 'webextension-polyfill';
-import { ArtistTrackInfo, BaseState, State, TimeInfo } from '@/core/types';
+import type { ArtistTrackInfo, BaseState, State, TimeInfo } from '@/core/types';
 import * as Util from '@/core/content/util';
-import { ConnectorMeta } from '../connectors';
+import type { ConnectorMeta } from '../connectors';
+import type { DisallowedReason } from '../object/disallowed-reason';
+import { sendContentMessage } from '@/util/communication';
 
 export default class BaseConnector {
 	/**
@@ -128,6 +130,67 @@ export default class BaseConnector {
 	 * set up some custom detection of player state changing.
 	 */
 	public playerSelector: string | string[] | null = null;
+
+	/**
+	 * This selector is used to determine where to inject the infobox
+	 */
+	public scrobbleInfoLocationSelector: string | null = null;
+
+	/**
+	 * Styles to apply to the infobox
+	 * this is in camelCase so its fontSize, not font-size
+	 */
+	public scrobbleInfoStyle: Partial<CSSStyleDeclaration> = {
+		display: 'flex',
+		gap: '0.5em',
+		alignItems: 'center',
+	};
+
+	/**
+	 * Function that gets a unique ID for channel/user blocklist.
+	 *
+	 * Has to be specified if usesBlocklist is set to true in connectors.ts.
+	 * If connectors.ts does not have usesBlocklist set to true, this should be null.
+	 */
+	public getChannelId: (() => string | null | undefined) | null = null;
+
+	/**
+	 * Selector of an element containing channel label.
+	 *
+	 * Only applies when default implementation of
+	 * {@link getChannelLabel} is used.
+	 */
+	public channelLabelSelector: string | string[] | null = null;
+
+	/**
+	 * Function that gets a label for the channel of ID fetched by {@link getChannelId}.
+	 *
+	 * This is the name that will be displayed to the user, and has no bearing on internal logic.
+	 * If not specified, {@link getChannelId} will be used.
+	 */
+	public getChannelLabel: (() => string | null | undefined) | null = () =>
+		Util.getTextFromSelectors(this.channelLabelSelector);
+
+	/**
+	 * Function that gets ID and label for a channel.
+	 *
+	 * A connector can specify this in lieu of {@link getChannelId}, as this is basically combo of
+	 * both {@link getChannelId} and {@link getChannelLabel}
+	 *
+	 * You may return null in this function, but if you return a result for one property,
+	 * you must return a result for both properties, even if the label is just
+	 * a duplicate of the id.
+	 */
+	public getChannelInfo: () => Util.ChannelInfo | null | undefined = () => {
+		const id = this.getChannelId?.();
+		if (!id) {
+			return null;
+		}
+		return {
+			id,
+			label: this.getChannelLabel?.() || id,
+		};
+	};
 
 	/**
 	 * Selector of element contains a track art of now playing song.
@@ -308,8 +371,55 @@ export default class BaseConnector {
 	 * @returns Check result
 	 */
 	public isTrackArtDefault: (
-		trackArtUrl?: string | null | undefined
+		trackArtUrl?: string | null,
 	) => boolean | null | undefined = () => false;
+
+	/**
+	 * Button to love/like a song on listening service.
+	 *
+	 * Note: for safety, you should generally implement BOTH loveButtonSelector AND unloveButtonSelector.
+	 * Ensure there is a direct transition between one to the other with zero time where neither matches.
+	 * Web scrobbler not discovering either for a bit will cause it not to to love/unlove.
+	 */
+	public loveButtonSelector: string | string[] | null = null;
+
+	/**
+	 * Button to unlove/unlike a song on listening service.
+	 *
+	 * Note: for safety, you should generally implement BOTH loveButtonSelector AND unloveButtonSelector.
+	 * Ensure there is a direct transition between one to the other with zero time where neither matches.
+	 * Web scrobbler not discovering either for a bit will cause it not to to love/unlove.
+	 */
+	public unloveButtonSelector: string | string[] | null = null;
+
+	/**
+	 * A check to see if song is loved or not.
+	 * If this changes from false to true or vice-versa the song
+	 * will be loved/unloved on scrobbling services.
+	 *
+	 * @returns True if song is liked; false otherwise
+	 */
+	public isLoved: () => boolean | null | undefined = () => {
+		if (this.loveButtonSelector) {
+			if (Util.isElementVisible(this.loveButtonSelector)) {
+				return false;
+			}
+			if (!this.unloveButtonSelector) {
+				return true;
+			}
+		}
+
+		if (this.unloveButtonSelector) {
+			if (Util.isElementVisible(this.unloveButtonSelector)) {
+				return true;
+			}
+			if (!this.loveButtonSelector) {
+				return false;
+			}
+		}
+
+		return null;
+	};
 
 	/**
 	 * Default implementation of a check to see if a state change is allowed.
@@ -323,14 +433,18 @@ export default class BaseConnector {
 	public isStateChangeAllowed: () => boolean | null | undefined = () => true;
 
 	/**
-	 * Default implementation of a check to see if a scrobbling is allowed.
-	 * The connector resets current state if this function returns falsy result.
+	 * Default implementation of a check to see if scrobbling is allowed.
+	 * The connector resets current state if this function returns non-falsy state.
+	 * The string content of non-falsy state determines the reason to show user for non-scrobbling.
 	 *
 	 * Override this method to allow certain states to be reset.
 	 *
-	 * @returns True if state change is allowed; false otherwise
+	 * @returns null/undefined if state change is allowed; {@link DisallowedReason} otherwise
 	 */
-	public isScrobblingAllowed: () => boolean | null | undefined = () => true;
+	public scrobblingDisallowedReason: () =>
+		| DisallowedReason
+		| null
+		| undefined = () => null;
 
 	/**
 	 * Function that will be called when the connector is injected and
@@ -351,7 +465,7 @@ export default class BaseConnector {
 	 * @param event - Event object
 	 */
 	public onScriptEvent: (
-		event: MessageEvent<Record<string, unknown>>
+		event: MessageEvent<Record<string, unknown>>,
 	) => void = () => {
 		// Do nothing
 	};
@@ -362,8 +476,8 @@ export default class BaseConnector {
 	private defaultFilter = MetadataFilter.createFilter(
 		MetadataFilter.createFilterSetForFields(
 			['artist', 'track', 'album', 'albumArtist'],
-			[(text) => text.trim(), MetadataFilter.replaceNbsp]
-		)
+			[(text) => text.trim(), MetadataFilter.replaceNbsp],
+		),
 	);
 
 	/**
@@ -430,7 +544,7 @@ export default class BaseConnector {
 				}
 
 				this.onScriptEvent(event);
-			}
+			},
 		);
 
 		window.webScrobblerScripts[scriptFile] = true;
@@ -451,6 +565,48 @@ export default class BaseConnector {
 	 */
 	public useMediaSessionApi: () => void = () => {
 		this.isMediaSessionAllowed = 'mediaSession' in navigator;
+	};
+
+	/**
+	 * used by {@link BaseConnector.useTabAudibleApi} for async {@link BaseConnector.isPlaying} updates
+	 */
+	private isPlayingAsync = true;
+
+	/**
+	 * interval being used by {@link BaseConnector.useTabAudibleApi}
+	 */
+	private tabAudibleFetchingInterval: NodeJS.Timeout | null = null;
+
+	/**
+	 * Enable using tab audible function for deciding whether song is playing.
+	 *
+	 * Polls for audible once a second, this isn't expensive so it's fine.
+	 *
+	 * overrides {@link BaseConnector.isPlaying}
+	 */
+	public useTabAudibleApi: () => void = () => {
+		this.isPlaying = () => {
+			return this.isPlayingAsync;
+		};
+
+		if (this.tabAudibleFetchingInterval !== null) {
+			clearInterval(this.tabAudibleFetchingInterval);
+		}
+
+		this.tabAudibleFetchingInterval = setInterval(() => {
+			sendContentMessage({
+				type: 'isTabAudible',
+				payload: undefined,
+			})
+				.then((res) => {
+					this.isPlayingAsync = res;
+					this.onStateChanged();
+				})
+				.catch(() => {
+					this.isPlayingAsync = true;
+					this.onStateChanged();
+				});
+		}, 1000);
 	};
 
 	/**
@@ -495,6 +651,7 @@ export default class BaseConnector {
 		trackArt: null,
 		isPodcast: false,
 		originUrl: null,
+		scrobblingDisallowedReason: null,
 	};
 
 	// #v-ifdef VITE_DEV
@@ -538,9 +695,42 @@ export default class BaseConnector {
 	/**
 	 * Callback set by the controller to listen on state changes of this connector.
 	 */
-	public controllerCallback:
-		| ((state: State, fields: (keyof State)[]) => void)
+	private _controllerCallback: ((state: State) => void) | null = null;
+
+	/**
+	 * Callback set by the controller to listen on state changes of this connector.
+	 */
+	public get controllerCallback(): ((state: State) => void) | null {
+		return this._controllerCallback;
+	}
+
+	public set controllerCallback(callback: (state: State) => void) {
+		callback(this.getCurrentState());
+		this._controllerCallback = callback;
+	}
+
+	/**
+	 * Callback set by the controller to listen on state changes of this connector.
+	 */
+	private _isLovedCallback:
+		| ((isLoved: boolean | null) => Promise<void>)
 		| null = null;
+
+	/**
+	 * Callback set by the controller to listen on state changes of this connector.
+	 */
+	public get isLovedCallback():
+		| ((isLoved: boolean | null) => Promise<void>)
+		| null {
+		return this._isLovedCallback;
+	}
+
+	public set isLovedCallback(
+		callback: (isLoved: boolean | null) => Promise<void>,
+	) {
+		callback(this.isLoved() ?? null);
+		this._isLovedCallback = callback;
+	}
 
 	/**
 	 * Function for all the hard work around detecting and updating state.
@@ -590,13 +780,13 @@ export default class BaseConnector {
 
 		this.getTimeInfo = () => {
 			return Util.splitTimeInfo(
-				Util.getTextFromSelectors(this.timeInfoSelector)
+				Util.getTextFromSelectors(this.timeInfoSelector),
 			);
 		};
 
 		this.getArtistTrack = () => {
 			return Util.splitArtistTrack(
-				Util.getTextFromSelectors(this.artistTrackSelector)
+				Util.getTextFromSelectors(this.artistTrackSelector),
 			);
 		};
 
@@ -630,10 +820,7 @@ export default class BaseConnector {
 			}
 
 			if (this.controllerCallback !== null) {
-				this.controllerCallback(
-					{},
-					Object.keys(this.defaultState) as (keyof State)[]
-				);
+				this.controllerCallback({});
 			}
 
 			this.isStateReset = true;
@@ -662,11 +849,6 @@ export default class BaseConnector {
 		};
 
 		this.stateChangedWorker = () => {
-			if (!this.isScrobblingAllowed()) {
-				this.resetState();
-				return;
-			}
-
 			this.isStateReset = false;
 
 			const changedFields: (keyof State)[] = [];
@@ -693,7 +875,7 @@ export default class BaseConnector {
 				this.filterState(changedFields);
 
 				if (this.controllerCallback !== null) {
-					this.controllerCallback(this.filteredState, changedFields);
+					this.controllerCallback(this.filteredState);
 				}
 
 				// #v-ifdef VITE_DEV
@@ -701,20 +883,26 @@ export default class BaseConnector {
 					Util.debugLog(
 						`isPlaying state changed to ${
 							newState.isPlaying?.toString() ?? 'undefined'
-						}`
+						}`,
 					);
 				}
 
 				for (const field of this.fieldsToCheckSongChange) {
 					if (changedFields.includes(field)) {
 						Util.debugLog(
-							JSON.stringify(this.filteredState, null, 2)
+							JSON.stringify(this.filteredState, null, 2),
 						);
 						break;
 					}
 				}
 				// #v-endif
 			}
+
+			/**
+			 * Finally, handle state change to isLoved,
+			 * which is completely independent of other state.
+			 */
+			this.isLovedCallback?.(this.isLoved() ?? null);
 		};
 
 		this.getCurrentState = () => {
@@ -726,6 +914,7 @@ export default class BaseConnector {
 				isPlaying: this.isPlaying(),
 				isPodcast: this.isPodcast(),
 				originUrl: this.getOriginUrl(),
+				scrobblingDisallowedReason: this.scrobblingDisallowedReason(),
 			};
 
 			let mediaSessionInfo = null;
@@ -745,7 +934,7 @@ export default class BaseConnector {
 			Util.fillEmptyFields(
 				newState,
 				mediaSessionInfo,
-				this.mediaSessionFields
+				this.mediaSessionFields,
 			);
 
 			const remainingTime = Math.abs(this.getRemainingTime() ?? 0);
@@ -770,7 +959,7 @@ export default class BaseConnector {
 				Util.fillEmptyFields(
 					newState,
 					trackInfo,
-					Object.keys(this.defaultState) as (keyof State)[]
+					Object.keys(this.defaultState) as (keyof State)[],
 				);
 			}
 
@@ -802,7 +991,7 @@ export default class BaseConnector {
 						fieldValue =
 							this.metadataFilter.filterField(
 								field,
-								fieldValue as string
+								fieldValue as string,
 							) || this.defaultState[field];
 						break;
 					}
@@ -834,7 +1023,25 @@ export default class BaseConnector {
 
 		this.stateChangedWorkerThrottled = Util.throttle(
 			this.stateChangedWorker,
-			500
+			500,
 		);
+
+		/**
+		 * Schedule a call to onstatechanged for a second ahead.
+		 *
+		 * When reloading/updating the extension, the site might not have a setup where there are regular updates especially if there is no seekbar
+		 * This ensures one call to onStateChanged is eventually done to get web scrobbler up to speed.
+		 *
+		 * This is only useful if a reload/update happens during a song being played, which invalidates extension context and requires us to recover everything.
+		 * In any other case it should essentially do nothing.
+		 *
+		 * Wait for one second to allow connector to initialize.
+		 *
+		 * This has to be in an anonymous call as we need to call what the onstatechanged function is then, not what it is now.
+		 * Connectors may have already overridden onstatechanged by that time.
+		 */
+		setTimeout(() => {
+			this.onStateChanged();
+		}, 1000);
 	}
 }

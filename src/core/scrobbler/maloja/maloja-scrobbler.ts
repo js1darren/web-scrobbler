@@ -1,10 +1,11 @@
 'use strict';
 
 import { ServiceCallResult } from '@/core/object/service-call-result';
-import { BaseSong } from '@/core/object/song';
+import type { BaseSong } from '@/core/object/song';
 import { timeoutPromise } from '@/util/util';
-import BaseScrobbler, { SessionData } from '@/core/scrobbler/base-scrobbler';
-import { MalojaTrackMetadata } from '@/core/scrobbler/maloja/maloja.types';
+import type { SessionData } from '@/core/scrobbler/base-scrobbler';
+import BaseScrobbler from '@/core/scrobbler/base-scrobbler';
+import type { MalojaTrackMetadata } from '@/core/scrobbler/maloja/maloja.types';
 
 /**
  * Module for communication with Maloja
@@ -13,6 +14,7 @@ import { MalojaTrackMetadata } from '@/core/scrobbler/maloja/maloja.types';
 export default class MalojaScrobbler extends BaseScrobbler<'Maloja'> {
 	public userToken!: string;
 	public userApiUrl!: string;
+	public isLocalOnly = true;
 
 	/** @override */
 	protected getStorageName(): 'Maloja' {
@@ -30,7 +32,7 @@ export default class MalojaScrobbler extends BaseScrobbler<'Maloja'> {
 	}
 
 	/** @override */
-	public getUsedDefinedProperties(): string[] {
+	public getUserDefinedProperties(): string[] {
 		return ['userApiUrl', 'userToken'];
 	}
 
@@ -60,7 +62,7 @@ export default class MalojaScrobbler extends BaseScrobbler<'Maloja'> {
 	/** @override */
 	public async getSession(): Promise<SessionData> {
 		if (!this.userToken) {
-			throw ServiceCallResult.ERROR_AUTH;
+			throw new Error(ServiceCallResult.ERROR_AUTH);
 		}
 		return Promise.resolve({ sessionID: this.userToken });
 	}
@@ -77,17 +79,30 @@ export default class MalojaScrobbler extends BaseScrobbler<'Maloja'> {
 	}
 
 	/** @override */
-	public async scrobble(song: BaseSong): Promise<ServiceCallResult> {
-		const songData = this.makeTrackMetadata(song);
+	async sendPaused(): Promise<ServiceCallResult> {
+		return Promise.resolve(ServiceCallResult.RESULT_OK);
+	}
 
-		return this.sendRequest(songData, this.userToken);
+	/** @override */
+	async sendResumedPlaying(): Promise<ServiceCallResult> {
+		return Promise.resolve(ServiceCallResult.RESULT_OK);
+	}
+
+	/** @override */
+	public async scrobble(songs: BaseSong[]): Promise<ServiceCallResult[]> {
+		const resultArray: Promise<ServiceCallResult>[] = [];
+		for (const song of songs.slice(0, 50)) {
+			const songData = this.makeTrackMetadata(song);
+			resultArray.push(this.sendRequest(songData, this.userToken));
+		}
+		return Promise.all(resultArray);
 	}
 
 	/** Private methods */
 
 	async sendRequest(
 		params: MalojaTrackMetadata,
-		sessionID: string
+		sessionID: string,
 	): Promise<ServiceCallResult> {
 		params.key = sessionID;
 
